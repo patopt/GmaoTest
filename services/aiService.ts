@@ -3,8 +3,6 @@ import { GoogleGenAI } from "@google/genai";
 import { AIAnalysis, EmailMessage } from '../types';
 import { logger } from '../utils/logger';
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-
 export const cleanAIResponse = (text: string): string => {
   let clean = text.trim();
   if (clean.includes('```')) {
@@ -32,14 +30,14 @@ export const analyzeSingleEmail = async (
     ${existingFolders.length > 0 ? existingFolders.join(', ') : 'Aucun dossier existant.'}
 
     MISSION : Analyser cet email et décider de son classement.
-    CONSIGNE CRITIQUE : Tu DOIS réutiliser en priorité un dossier de la liste ci-dessus s'il est pertinent pour l'email. Ne crée un nouveau nom de dossier que si ABSOLUMENT nécessaire (aucune correspondance possible).
+    CONSIGNE CRITIQUE : Tu DOIS réutiliser en priorité un dossier de la liste ci-dessus s'il est pertinent pour l'email. Ne crée un nouveau nom de dossier que si ABSOLUMENT nécessaire.
     
     EMAIL :
     De : ${email.from}
     Objet : ${email.subject}
     Snippet : ${email.snippet}
 
-    RÉPONDS UNIQUEMENT PAR UN OBJET JSON VALIDE SANS COMMENTAIRE :
+    RÉPONDS UNIQUEMENT PAR UN OBJET JSON VALIDE :
     {
       "category": "Travail|Personnel|Finance|Social|Urgent|Autre",
       "tags": ["Tag1", "Tag2"],
@@ -55,6 +53,7 @@ export const analyzeSingleEmail = async (
       const response = await window.puter.ai.chat(prompt, { model });
       responseText = (typeof response === 'string') ? response : (response.text || response.toString());
     } else {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: 'gemini-3-pro-preview',
         contents: prompt,
@@ -74,13 +73,14 @@ export const analyzeSingleEmail = async (
 
 export const testAIConnection = async (provider: string, model: string): Promise<boolean> => {
   try {
-    const testPrompt = "Réponds 'OK' si tu m'entends.";
+    const testPrompt = "Réponds 'OK'";
     if (provider === 'puter') {
       if (!window.puter) return false;
       const resp = await window.puter.ai.chat(testPrompt, { model });
       const text = (typeof resp === 'string') ? resp : (resp.text || resp.toString());
       return text.toUpperCase().includes('OK');
     } else {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const resp = await ai.models.generateContent({ 
         model: 'gemini-3-flash-preview', 
         contents: testPrompt 
@@ -92,27 +92,35 @@ export const testAIConnection = async (provider: string, model: string): Promise
   }
 };
 
-export const suggestFolderOptimization = async (folders: string[]): Promise<any> => {
+export const suggestFolderOptimization = async (folders: string[], model: string, provider: string): Promise<any> => {
   const prompt = `
-    En tant qu'expert en organisation, analyse cette liste de dossiers Gmail : ${folders.join(', ')}.
-    Identifie les doublons potentiels, les dossiers trop similaires ou ceux qui pourraient être fusionnés pour une meilleure clarté.
+    Analyse cette liste de dossiers Gmail : ${folders.join(', ')}.
+    Identifie les doublons ou ceux qui pourraient être fusionnés.
     Réponds uniquement par un JSON :
     {
       "suggestions": [
-        { "from": "NomAncienDossier", "to": "NomNouveauDossier", "reason": "Raison de la fusion" }
+        { "from": "Ancien", "to": "Nouveau", "reason": "Explication" }
       ]
     }
   `;
 
   try {
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: prompt,
-      config: { responseMimeType: "application/json" }
-    });
-    return JSON.parse(cleanAIResponse(response.text));
+    let responseText = "";
+    if (provider === 'puter') {
+      const response = await window.puter.ai.chat(prompt, { model });
+      responseText = (typeof response === 'string') ? response : (response.text || response.toString());
+    } else {
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const response = await ai.models.generateContent({
+        model: model,
+        contents: prompt,
+        config: { responseMimeType: "application/json" }
+      });
+      responseText = response.text || "";
+    }
+    return JSON.parse(cleanAIResponse(responseText));
   } catch (err) {
-    logger.error("Erreur lors de la suggestion d'optimisation", err);
+    logger.error("Erreur optimisation dossiers", err);
     return { suggestions: [] };
   }
 };

@@ -7,13 +7,11 @@ import BatchAccordion from './components/BatchAccordion';
 import { GMAIL_DISCOVERY_DOCS, GMAIL_SCOPES, GOOGLE_CLIENT_ID, DEFAULT_AI_MODEL } from './constants';
 import { EnrichedEmail, HarvestTranche, ViewMode, FolderStyle, TrainingStep } from './types';
 import { getTotalInboxCount, moveEmailsToLabel, applyTagsToEmail, getUserLabels } from './services/gmailService';
-import { analyzeSingleEmail, cleanAIResponse, suggestFolderOptimization } from './services/aiService';
-import { GoogleGenAI } from "@google/genai";
+import { analyzeSingleEmail, suggestFolderOptimization } from './services/aiService';
 import { 
   Loader2, Database, Settings, StopCircle, Rocket, Layers, ListFilter, 
   PlayCircle, Check, Zap, BarChart3, PieChart, Info, X, Search, Mail, 
-  BrainCircuit, LayoutGrid, Star, Archive, Trash, MoreVertical, Menu,
-  Inbox, RefreshCw, ChevronLeft, Filter, Sparkles
+  BrainCircuit, LayoutGrid, Star, Inbox, RefreshCw, Menu, Sparkles
 } from 'lucide-react';
 import { logger } from './utils/logger';
 
@@ -35,24 +33,24 @@ export default function App() {
   const [statusText, setStatusText] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(window.innerWidth > 768);
   const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [gmailLabels, setGmailLabels] = useState<string[]>([]);
   
   const [isAutopilotRunning, setIsAutopilotRunning] = useState(false);
   const [autopilotLogs, setAutopilotLogs] = useState<string[]>([]);
-  const [trainingSteps, setTrainingSteps] = useState<TrainingStep[]>([]);
   const [isTrainingActive, setIsTrainingActive] = useState(false);
 
   const [totalInboxCount, setTotalInboxCount] = useState<number>(() => Number(localStorage.getItem('total_inbox_count')) || 0);
   const [tranches, setTranches] = useState<HarvestTranche[]>(() => {
-    const saved = localStorage.getItem('harvest_tranches_v12');
+    const saved = localStorage.getItem('harvest_tranches_v13');
     return saved ? JSON.parse(saved) : [];
   });
 
   const stopSignal = useRef<boolean>(false);
 
-  // Persistance Mémoire
+  // Sauvegarde persistante
   useEffect(() => {
     if (tranches.length > 0) {
-      localStorage.setItem('harvest_tranches_v12', JSON.stringify(tranches));
+      localStorage.setItem('harvest_tranches_v13', JSON.stringify(tranches));
       localStorage.setItem('total_inbox_count', String(totalInboxCount));
     }
   }, [tranches, totalInboxCount]);
@@ -61,49 +59,55 @@ export default function App() {
     localStorage.setItem('last_view_mode', viewMode);
   }, [viewMode]);
 
+  // Initialisation sécurisée des services Google
   const initGoogleServices = useCallback(() => {
-    const loadGapi = () => {
-      window.gapi.load('client', async () => {
-        try {
-          await window.gapi.client.init({ discoveryDocs: GMAIL_DISCOVERY_DOCS });
-          const token = localStorage.getItem('google_access_token');
-          if (token) {
-            window.gapi.client.setToken({ access_token: token });
-            try {
-              const profile = await window.gapi.client.gmail.users.getProfile({ userId: 'me' });
-              setUserEmail(profile.result.emailAddress);
-              const total = await getTotalInboxCount();
-              setTotalInboxCount(total);
-              if (tranches.length === 0) generateTranches(total);
-            } catch (e: any) {
-              if (e.status === 401) {
-                localStorage.removeItem('google_access_token');
-                setUserEmail(null);
+    const checkReady = () => {
+      if (window.gapi && window.google) {
+        window.gapi.load('client', async () => {
+          try {
+            await window.gapi.client.init({ discoveryDocs: GMAIL_DISCOVERY_DOCS });
+            const token = localStorage.getItem('google_access_token');
+            if (token) {
+              window.gapi.client.setToken({ access_token: token });
+              try {
+                const profile = await window.gapi.client.gmail.users.getProfile({ userId: 'me' });
+                setUserEmail(profile.result.emailAddress);
+                const total = await getTotalInboxCount();
+                setTotalInboxCount(total);
+                const labels = await getUserLabels();
+                setGmailLabels(labels);
+                if (tranches.length === 0) generateTranches(total);
+              } catch (e: any) {
+                if (e.status === 401) {
+                  localStorage.removeItem('google_access_token');
+                  setUserEmail(null);
+                }
               }
             }
-          }
-        } catch (e) { logger.error("GAPI Init Error", e); }
-      });
-    };
+          } catch (e) { logger.error("Erreur GAPI Init", e); }
+        });
 
-    if (window.google?.accounts?.oauth2) {
-      window.tokenClient = window.google.accounts.oauth2.initTokenClient({
-        client_id: GOOGLE_CLIENT_ID,
-        scope: GMAIL_SCOPES,
-        callback: async (resp: any) => {
-          if (resp.error) return;
-          localStorage.setItem('google_access_token', resp.access_token);
-          window.gapi.client.setToken({ access_token: resp.access_token });
-          const profile = await window.gapi.client.gmail.users.getProfile({ userId: 'me' });
-          setUserEmail(profile.result.emailAddress);
-          const total = await getTotalInboxCount();
-          setTotalInboxCount(total);
-          generateTranches(total);
-          logger.success("Synchronisation Gmail établie.");
-        },
-      });
-    }
-    loadGapi();
+        window.tokenClient = window.google.accounts.oauth2.initTokenClient({
+          client_id: GOOGLE_CLIENT_ID,
+          scope: GMAIL_SCOPES,
+          callback: async (resp: any) => {
+            if (resp.error) return;
+            localStorage.setItem('google_access_token', resp.access_token);
+            window.gapi.client.setToken({ access_token: resp.access_token });
+            const profile = await window.gapi.client.gmail.users.getProfile({ userId: 'me' });
+            setUserEmail(profile.result.emailAddress);
+            const total = await getTotalInboxCount();
+            setTotalInboxCount(total);
+            const labels = await getUserLabels();
+            setGmailLabels(labels);
+            generateTranches(total);
+          },
+        });
+      } else {
+        setTimeout(checkReady, 500);
+      }
+    };
+    checkReady();
   }, [tranches.length]);
 
   useEffect(() => { initGoogleServices(); }, [initGoogleServices]);
@@ -129,15 +133,14 @@ export default function App() {
     try {
       const emailsToProcess = emailsToAnalyze.filter(e => retryOnly ? (e.failed && !e.processed) : !e.processed);
       const CONCURRENCY = config.concurrency;
-      
       const currentLabels = await getUserLabels();
+      setGmailLabels(currentLabels);
 
       for (let i = 0; i < emailsToProcess.length; i += CONCURRENCY) {
         if (stopSignal.current) break;
         const chunk = emailsToProcess.slice(i, i + CONCURRENCY);
-        
         const remaining = emailsToProcess.length - i;
-        setStatusText(`Analyse Titan en cours... (${remaining} emails restants)`);
+        setStatusText(`Analyse Titan en cours... (${remaining} restants)`);
 
         await Promise.all(chunk.map(async (email) => {
           try {
@@ -150,7 +153,6 @@ export default function App() {
               ...t, emails: t.emails.map(e => e.id === email.id ? { ...e, analysis, processed: true, organized: moved, failed: false } : e)
             } : t));
           } catch (error) {
-            logger.error(`Erreur sur l'email ${email.id}`, error);
             setTranches(curr => curr.map(t => t.id === trancheId ? {
               ...t, emails: t.emails.map(e => e.id === email.id ? { ...e, failed: true } : e)
             } : t));
@@ -177,12 +179,9 @@ export default function App() {
       let allEmails = [...tranche.emails];
 
       while (fetched < tranche.totalToFetch && !stopSignal.current) {
-        setStatusText(`Récolte en cours : ${fetched}/${tranche.totalToFetch}`);
+        setStatusText(`Récolte : ${fetched}/${tranche.totalToFetch}`);
         const response: any = await window.gapi.client.gmail.users.messages.list({ 
-          userId: 'me', 
-          maxResults: 100, 
-          pageToken, 
-          labelIds: ['INBOX'] 
+          userId: 'me', maxResults: 100, pageToken, labelIds: ['INBOX'] 
         });
         
         const messages = response.result.messages || [];
@@ -219,62 +218,44 @@ export default function App() {
   const startAutopilot = async () => {
     setIsAutopilotRunning(true);
     stopSignal.current = false;
-    setAutopilotLogs(["[START] Lancement de l'Autopilote.", "[STEP 1/2] Récolte de tous les emails en cours..."]);
+    setAutopilotLogs(["[START] Autopilote Titanesque.", "[STEP 1/2] Récolte globale..."]);
     
-    // 1. Récolte complète de toutes les tranches nécessaires
     for (const tranche of tranches) {
       if (stopSignal.current) break;
       if (tranche.status !== 'completed') {
-        setAutopilotLogs(prev => [`[HARVEST] Début de la récolte pour le Bloc ${tranche.id}`, ...prev]);
+        setAutopilotLogs(prev => [`[HARVEST] Bloc ${tranche.id}`, ...prev]);
         await runHarvestMission(tranche.id);
       }
     }
     
     if (stopSignal.current) {
-      setAutopilotLogs(prev => ["[STOP] Autopilote arrêté prématurément.", ...prev]);
       setIsAutopilotRunning(false);
       return;
     }
 
-    setAutopilotLogs(prev => ["[STEP 2/2] Analyse neuronale par blocs...", ...prev]);
-    
-    // 2. Analyse complète de toutes les tranches
+    setAutopilotLogs(prev => ["[STEP 2/2] Analyse neuronale...", ...prev]);
     for (const tranche of tranches) {
       if (stopSignal.current) break;
       const unanalyzed = tranche.emails.filter(e => !e.processed);
       if (unanalyzed.length > 0) {
-        setAutopilotLogs(prev => [`[ANALYSE] Début de l'analyse du Bloc ${tranche.id} (${unanalyzed.length} emails)`, ...prev]);
+        setAutopilotLogs(prev => [`[ANALYSE] Bloc ${tranche.id}`, ...prev]);
         await handleSequentialAnalyze(tranche.id, tranche.emails);
       }
     }
-
     setIsAutopilotRunning(false);
-    setAutopilotLogs(prev => ["[FIN] Autopilote terminé avec succès.", ...prev]);
   };
 
   const handleOptimizeFolders = async () => {
-    const currentFolders = await getUserLabels();
-    if (currentFolders.length < 2) {
-      alert("Pas assez de dossiers pour optimiser.");
-      return;
-    }
-    
+    const labels = await getUserLabels();
+    if (labels.length < 2) return alert("Pas assez de dossiers.");
     setIsAnalyzing(true);
-    setStatusText("Optimisation de l'arborescence...");
+    setStatusText("Optimisation IA...");
     try {
-      const result = await suggestFolderOptimization(currentFolders);
-      if (result.suggestions && result.suggestions.length > 0) {
-        const msg = result.suggestions.map((s: any) => `• De "${s.from}" vers "${s.to}" : ${s.reason}`).join('\n');
-        alert("Suggestions d'optimisation IA :\n\n" + msg);
-      } else {
-        alert("Votre arborescence est déjà optimale.");
-      }
-    } catch (e) {
-      logger.error("Erreur optimisation", e);
-    } finally {
-      setIsAnalyzing(false);
-      setStatusText('');
-    }
+      const result = await suggestFolderOptimization(labels, config.model, config.provider);
+      if (result.suggestions?.length > 0) {
+        alert("Suggestions IA :\n" + result.suggestions.map((s:any) => `• ${s.from} -> ${s.to}`).join('\n'));
+      } else { alert("Arborescence optimale."); }
+    } finally { setIsAnalyzing(false); setStatusText(''); }
   };
 
   const allEmails = useMemo(() => tranches.flatMap(t => t.emails), [tranches]);
@@ -325,24 +306,15 @@ export default function App() {
       )}
 
       <main className="flex-1 flex flex-col overflow-hidden relative">
-        {/* PROGRESS OVERLAY WINDOW */}
         {(isAnalyzing || loading) && (
           <div className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in">
              <div className="bg-[#0A0A0A] border border-white/10 p-10 rounded-[48px] shadow-4xl flex flex-col items-center gap-6 max-w-sm w-full text-center">
-                <div className="relative">
-                  <Loader2 className="w-16 h-16 text-indigo-500 animate-spin" />
-                  <Sparkles className="absolute inset-0 m-auto w-6 h-6 text-indigo-400 animate-pulse" />
-                </div>
+                <Loader2 className="w-16 h-16 text-indigo-500 animate-spin" />
                 <div className="space-y-2">
                    <h3 className="text-xl font-black uppercase tracking-widest">Calcul Neural...</h3>
                    <p className="text-[10px] font-black text-white/30 uppercase tracking-[0.4em]">{statusText}</p>
                 </div>
-                <button 
-                  onClick={() => stopSignal.current = true} 
-                  className="px-6 py-3 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-2xl text-[10px] font-black uppercase transition-all"
-                >
-                  Interrompre
-                </button>
+                <button onClick={() => stopSignal.current = true} className="px-6 py-3 bg-red-500/10 text-red-500 rounded-2xl text-[10px] font-black uppercase">Interrompre</button>
              </div>
           </div>
         )}
@@ -350,7 +322,7 @@ export default function App() {
         {!userEmail ? (
           <div className="flex-1 flex flex-col items-center justify-center p-6 text-center">
              <Rocket className="w-24 h-24 text-indigo-500 animate-pulse mb-10" />
-             <h2 className="text-5xl font-black tracking-tighter mb-4">Titan Hors Ligne</h2>
+             <h2 className="text-5xl font-black tracking-tighter mb-4">Titan Prêt</h2>
              <button onClick={() => window.tokenClient?.requestAccessToken({ prompt: 'select_account' })} className="py-8 px-16 bg-white text-black font-black rounded-[40px] flex items-center gap-6 shadow-2xl hover:scale-105 transition-all text-xl"><img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-10 h-10" /> Sync Gmail</button>
           </div>
         ) : (
@@ -369,15 +341,15 @@ export default function App() {
 
                 {isAutopilotRunning && (
                   <div className="bg-indigo-600/10 border border-indigo-500/20 rounded-[48px] p-8 space-y-6">
-                     <h3 className="text-xs font-black uppercase tracking-[0.5em] text-indigo-400 flex items-center gap-3"><Zap className="w-5 h-5" /> Autopilot Live Monitor</h3>
-                     <div className="bg-black/40 rounded-3xl p-6 font-mono text-[11px] h-40 overflow-y-auto space-y-2 no-scrollbar">
+                     <h3 className="text-xs font-black uppercase tracking-[0.5em] text-indigo-400 flex items-center gap-3"><Zap className="w-5 h-5" /> Autopilot Monitor</h3>
+                     <div className="bg-black/40 rounded-3xl p-6 font-mono text-[11px] h-40 overflow-y-auto space-y-2 no-scrollbar shadow-inner">
                         {autopilotLogs.map((log, i) => <div key={i} className="text-white/60"><span className="text-indigo-500/60 font-bold">[{i}]</span> {log}</div>)}
                      </div>
                   </div>
                 )}
 
                 <div className="space-y-8">
-                  <h2 className="text-4xl font-black tracking-tighter px-6">Mission Pipeline <span className="text-indigo-400">x{config.concurrency}</span></h2>
+                  <h2 className="text-4xl font-black tracking-tighter px-6">Pipeline Mission <span className="text-indigo-400">x{config.concurrency}</span></h2>
                   {tranches.map(t => (
                     <MissionCard key={t.id} tranche={t} isLoading={isAnalyzing || loading} onStart={() => runHarvestMission(t.id)} onStop={() => stopSignal.current = true} onAnalyze={(emails: any, retry?: boolean) => handleSequentialAnalyze(t.id, emails, retry)} />
                   ))}
@@ -387,7 +359,6 @@ export default function App() {
 
             {viewMode === 'mail' && (
               <div className="flex-1 flex overflow-hidden bg-black relative">
-                {/* Sidebar Responsif */}
                 <aside className={`absolute md:relative z-40 h-full bg-[#0A0A0A] border-r border-white/5 transition-all duration-500 overflow-hidden flex flex-col ${isSidebarOpen ? 'w-80 translate-x-0' : 'w-0 -translate-x-full md:translate-x-0'}`}>
                   <div className="p-8 flex flex-col h-full space-y-10 w-80 shrink-0">
                     <button onClick={() => { setSelectedFolder(null); if(window.innerWidth < 768) setIsSidebarOpen(false); }} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all ${!selectedFolder ? 'bg-indigo-600 shadow-xl' : 'text-white/40'}`}><Inbox className="w-5 h-5" /> Réception</button>
@@ -401,17 +372,14 @@ export default function App() {
                     </div>
                   </div>
                 </aside>
-
-                {/* Overlay pour fermer le menu sur mobile */}
                 {isSidebarOpen && window.innerWidth < 768 && <div className="fixed inset-0 bg-black/60 z-30" onClick={() => setIsSidebarOpen(false)}></div>}
-                
                 <div className="flex-1 flex flex-col overflow-hidden bg-white/[0.02]">
-                   <div className="p-6 border-b border-white/5 flex justify-between items-center bg-[#050505]/80 backdrop-blur-xl">
+                   <div className="p-6 border-b border-white/5 flex justify-between items-center bg-[#050505]/80 backdrop-blur-xl shrink-0">
                       <div className="flex items-center gap-4">
                         <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="p-3 bg-white/5 rounded-2xl md:hidden"><Menu className="w-5 h-5" /></button>
-                        <h3 className="text-xl font-black tracking-tighter">{selectedFolder || "Boîte de réception"}</h3>
+                        <h3 className="text-xl font-black tracking-tighter truncate max-w-[150px] sm:max-w-none">{selectedFolder || "Réception"}</h3>
                       </div>
-                      <button onClick={() => window.location.reload()} className="p-3 bg-white/5 rounded-2xl hover:bg-indigo-600/20 transition-all"><RefreshCw className="w-5 h-5" /></button>
+                      <button onClick={() => window.location.reload()} className="p-3 bg-white/5 rounded-2xl"><RefreshCw className="w-5 h-5" /></button>
                    </div>
                    <div className="flex-1 overflow-y-auto divide-y divide-white/5 no-scrollbar">
                      {filteredEmails.map(e => (
@@ -420,7 +388,7 @@ export default function App() {
                           <div className="flex items-center justify-between sm:justify-start gap-4 shrink-0">
                              <div className="flex items-center gap-4">
                                <Star className="w-4 h-4 text-white/5 group-hover:text-yellow-500/40 shrink-0" />
-                               <div className="w-32 sm:w-48 text-[13px] font-black text-white/80 truncate shrink-0">{e.from.split('<')[0]}</div>
+                               <div className="w-32 sm:w-48 text-[13px] font-black text-white/80 truncate">{e.from.split('<')[0]}</div>
                              </div>
                              <span className="sm:hidden text-[10px] font-black text-white/10">{new Date(parseInt(e.internalDate)).toLocaleDateString([], {day:'2-digit', month:'2-digit'})}</span>
                           </div>
@@ -428,22 +396,18 @@ export default function App() {
                             <span className="font-bold text-[14px] text-white truncate">{e.subject}</span>
                             <span className="text-white/20 text-[12px] truncate mt-0.5">{e.snippet}</span>
                           </div>
-                          <div className="hidden sm:block text-[10px] font-black text-white/10 uppercase tracking-tighter">{new Date(parseInt(e.internalDate)).toLocaleDateString([], {day:'2-digit', month:'2-digit'})}</div>
                        </div>
                      ))}
-                     {filteredEmails.length === 0 && <div className="py-40 text-center opacity-10 font-black uppercase tracking-[0.4em] text-xs">Dossier Vide</div>}
                    </div>
                 </div>
               </div>
             )}
-            
             {viewMode === 'training' && (
               <div className="flex-1 overflow-y-auto p-10 max-w-4xl mx-auto w-full">
                 <div className="p-20 bg-white/5 rounded-[64px] border border-white/5 flex flex-col items-center gap-10 text-center">
                    <BrainCircuit className="w-24 h-24 text-indigo-500 animate-bounce" />
                    <h2 className="text-5xl font-black tracking-tighter">Calibration Titan</h2>
-                   <p className="text-white/20 max-w-sm font-bold uppercase text-[10px] tracking-[0.4em]">Optimisation manuelle des algorithmes de classement IA.</p>
-                   <button onClick={() => alert("Calibration en cours de déploiement...")} className="px-14 py-7 bg-white text-black rounded-[40px] font-black text-sm active:scale-95 transition-all">Lancer Session</button>
+                   <button onClick={() => alert("Calibration active...")} className="px-14 py-7 bg-white text-black rounded-[40px] font-black text-sm">Lancer Session</button>
                 </div>
               </div>
             )}
@@ -451,38 +415,28 @@ export default function App() {
         )}
       </main>
 
-      {/* Bilan Global */}
       {showSummary && (
         <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 animate-in fade-in">
           <div className="bg-[#080808] w-full max-w-5xl h-[85vh] rounded-[72px] border border-white/10 p-12 sm:p-16 overflow-y-auto relative no-scrollbar shadow-4xl">
              <button onClick={() => setShowSummary(false)} className="absolute top-10 right-10 p-5 bg-white/5 rounded-full"><X className="w-6 h-6" /></button>
              <div className="space-y-16">
-                <h2 className="text-6xl font-black tracking-tighter">Bilan Intelligent</h2>
+                <h2 className="text-6xl font-black tracking-tighter">Bilan Global</h2>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-16">
                    <div className="space-y-6">
                       <div className="flex justify-between items-center px-2">
-                        <h3 className="text-xs font-black uppercase tracking-widest text-white/20">Répartition Dossiers</h3>
-                        <button 
-                          onClick={handleOptimizeFolders}
-                          className="px-5 py-2.5 bg-indigo-600 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"
-                        >
-                          <Sparkles className="w-3 h-3" /> Optimiser Dossiers
-                        </button>
+                        <h3 className="text-xs font-black uppercase tracking-widest text-white/20">Dossiers</h3>
+                        <button onClick={handleOptimizeFolders} className="px-5 py-2.5 bg-indigo-600 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"><Sparkles className="w-3 h-3" /> Optimiser</button>
                       </div>
                       <div className="space-y-2">
                          {stats.folders.map(([n, c]) => (
-                           <div key={n} className="p-6 bg-white/5 rounded-3xl flex justify-between items-center border border-white/5 group hover:bg-white/10 transition-all">
-                             <span className="font-black text-sm">{n}</span><span className="font-black text-indigo-400 bg-indigo-500/10 px-4 py-1 rounded-full text-xs">{c}</span>
-                           </div>
+                           <div key={n} className="p-6 bg-white/5 rounded-3xl flex justify-between items-center border border-white/5 font-black text-sm"><span>{n}</span><span className="text-indigo-400">{c}</span></div>
                          ))}
                       </div>
                    </div>
-                   <div className="space-y-12">
-                      <div className="p-12 bg-indigo-600 rounded-[56px] shadow-3xl flex items-center justify-between relative overflow-hidden">
-                         <div className="relative z-10"><p className="text-8xl font-black tracking-tighter">{stats.count}</p><p className="text-[10px] font-black uppercase opacity-60 tracking-widest">Emails Organisés</p></div>
-                         <PieChart className="w-24 h-24 opacity-20 relative z-10" />
-                         <div className="absolute -top-10 -right-10 w-40 h-40 bg-white/5 blur-3xl rounded-full"></div>
-                      </div>
+                   <div className="p-12 bg-indigo-600 rounded-[56px] shadow-3xl flex flex-col items-center justify-center text-center">
+                      <PieChart className="w-24 h-24 opacity-20 mb-6" />
+                      <p className="text-8xl font-black tracking-tighter">{stats.count}</p>
+                      <p className="text-[10px] font-black uppercase opacity-60 tracking-widest">Emails Organisés</p>
                    </div>
                 </div>
              </div>
@@ -510,7 +464,7 @@ function MissionCard({ tranche, onStart, onStop, isLoading, onAnalyze }: any) {
           <div className={`w-20 h-20 rounded-[32px] flex items-center justify-center transition-all ${tranche.status === 'completed' ? 'bg-emerald-500 text-black' : tranche.status === 'running' ? 'bg-indigo-600 animate-pulse' : 'bg-white/5 text-white/20'}`}><Database className="w-10 h-10" /></div>
           <div className="flex-1 min-w-0"><h3 className="text-3xl font-black truncate">Bloc {tranche.id}</h3><div className="flex items-center gap-4 mt-3"><div className="w-40 h-2 bg-white/5 rounded-full overflow-hidden"><div className={`h-full transition-all duration-1000 ${tranche.status === 'completed' ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${prog}%` }} /></div><span className="text-[11px] font-black text-white/30">{tranche.fetchedCount} / {tranche.totalToFetch}</span></div></div>
         </div>
-        <button onClick={(e) => { e.stopPropagation(); tranche.status === 'running' ? onStop() : onStart(); }} disabled={isLoading && tranche.status !== 'running'} className={`w-full sm:w-auto p-6 rounded-[28px] shadow-2xl transition-all active:scale-95 ${tranche.status === 'running' ? 'bg-red-500 text-white' : 'bg-white text-black hover:scale-105'}`}>{tranche.status === 'running' ? <StopCircle className="w-8 h-8" /> : <PlayCircle className="w-8 h-8" />}</button>
+        <button onClick={(e) => { e.stopPropagation(); tranche.status === 'running' ? onStop() : onStart(); }} disabled={isLoading && tranche.status !== 'running'} className={`w-full sm:w-auto p-6 rounded-[28px] shadow-2xl transition-all active:scale-95 ${tranche.status === 'running' ? 'bg-red-500 text-white' : 'bg-white text-black'}`}>{tranche.status === 'running' ? <StopCircle className="w-8 h-8" /> : <PlayCircle className="w-8 h-8" />}</button>
       </div>
       {isOpen && (
         <div className="p-10 pt-0 space-y-8 animate-in slide-in-from-top-10">
