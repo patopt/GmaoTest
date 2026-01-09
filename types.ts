@@ -22,16 +22,22 @@ export interface EnrichedEmail extends EmailMessage {
   processed?: boolean;
 }
 
+export type TaskStatus = 'pending' | 'running' | 'stopped' | 'completed' | 'error' | 'cooldown';
+
+export interface HarvestTranche {
+  id: number;
+  startIndex: number;
+  totalToFetch: number;
+  fetchedCount: number;
+  status: TaskStatus;
+  emails: EnrichedEmail[];
+  nextPageToken?: string | null;
+}
+
 export interface EmailBatch {
   id: number;
   emails: EnrichedEmail[];
-  status: 'pending' | 'processing' | 'completed' | 'error';
-}
-
-export interface AppState {
-  totalInboxCount: number;
-  lastFetchedToken: string | null;
-  processedCount: number;
+  status: TaskStatus;
 }
 
 declare global {
