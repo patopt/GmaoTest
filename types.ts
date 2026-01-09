@@ -28,6 +28,12 @@ export interface EmailBatch {
   status: 'pending' | 'processing' | 'completed' | 'error';
 }
 
+export interface AppState {
+  totalInboxCount: number;
+  lastFetchedToken: string | null;
+  processedCount: number;
+}
+
 declare global {
   interface Window {
     puter: any;

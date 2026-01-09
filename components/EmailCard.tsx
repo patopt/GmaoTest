@@ -1,5 +1,5 @@
 import React from 'react';
-import { Tag, FolderInput, Check, MoveRight } from 'lucide-react';
+import { Tag, FolderOpen, Send, User, ChevronRight, Hash } from 'lucide-react';
 import { EnrichedEmail } from '../types';
 
 interface EmailCardProps {
@@ -11,54 +11,76 @@ const EmailCard: React.FC<EmailCardProps> = ({ email, onAction }) => {
   const analysis = email.analysis;
 
   return (
-    <div className={`bg-slate-800 border rounded-2xl p-5 transition-all duration-300 shadow-xl h-full flex flex-col ${
-      analysis ? 'border-indigo-500/30 bg-slate-800/80' : 'border-slate-700 opacity-60'
+    <div className={`group relative bg-white/5 backdrop-blur-xl border rounded-[28px] p-5 transition-all duration-500 hover:bg-white/10 hover:shadow-2xl hover:-translate-y-1 ${
+      analysis ? 'border-white/10' : 'border-white/5 opacity-50'
     }`}>
-      <div className="flex justify-between items-start mb-3">
-        <div className="flex-1 min-w-0 pr-2">
-          <h3 className="text-sm font-bold text-white truncate" title={email.subject}>
-            {email.subject || '(Sans objet)'}
-          </h3>
-          <p className="text-[10px] text-slate-500 font-mono truncate">{email.from}</p>
+      {/* Sender & Badge */}
+      <div className="flex justify-between items-start mb-4">
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white shrink-0 shadow-lg">
+            <User className="w-5 h-5" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest truncate">
+              {email.from?.split('<')[0].trim() || 'Expéditeur inconnu'}
+            </p>
+            <h3 className="text-[15px] font-black text-white/90 truncate leading-tight">
+              {email.subject || '(Sans objet)'}
+            </h3>
+          </div>
         </div>
         {analysis && (
-          <span className="text-[9px] font-black px-2 py-0.5 rounded-md border bg-indigo-500/10 border-indigo-500/30 text-indigo-300 uppercase tracking-tighter shrink-0">
+          <div className="bg-white/10 px-2.5 py-1 rounded-full border border-white/5 text-[10px] font-black text-white/60 uppercase tracking-tighter">
             {analysis.category}
-          </span>
+          </div>
         )}
       </div>
 
-      <p className="text-slate-400 text-xs mb-6 line-clamp-2 italic">
-        {email.snippet}
-      </p>
+      {/* Content Preview */}
+      <div className="mb-6">
+        <p className="text-white/40 text-[13px] leading-relaxed line-clamp-2 italic font-medium">
+          {email.snippet}
+        </p>
+      </div>
 
+      {/* AI Intelligence / Actions */}
       {analysis ? (
-        <div className="mt-auto space-y-4">
-          <div className="bg-slate-900/80 rounded-xl p-3 border border-slate-700/50">
-            <p className="text-xs text-indigo-200 font-medium leading-relaxed">
-              <span className="text-slate-500 mr-2 text-[10px] font-bold">IA:</span> 
-              "{analysis.summary}"
-            </p>
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {analysis.tags.slice(0, 3).map((tag, idx) => (
-                <span key={idx} className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 flex items-center gap-1">
-                   <Tag className="w-2.5 h-2.5" /> {tag}
-                </span>
-              ))}
-            </div>
+        <div className="space-y-4 pt-4 border-t border-white/5">
+          <div className="bg-indigo-500/5 rounded-2xl p-4 border border-indigo-500/10">
+             <div className="flex items-start gap-2 mb-3">
+               <Send className="w-3 h-3 text-indigo-400 mt-0.5" />
+               <p className="text-[12px] text-indigo-200/80 font-semibold leading-snug">
+                 {analysis.summary}
+               </p>
+             </div>
+             <div className="flex flex-wrap gap-1.5">
+               {analysis.tags.map((tag, idx) => (
+                 <span key={idx} className="bg-white/5 text-[10px] text-white/40 px-2 py-0.5 rounded-lg border border-white/5 flex items-center gap-1">
+                   <Hash className="w-2.5 h-2.5" /> {tag}
+                 </span>
+               ))}
+             </div>
           </div>
 
-          <button 
-            onClick={() => onAction(analysis.suggestedFolder)}
-            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 group shadow-lg shadow-indigo-600/10"
-          >
-            Déplacer vers {analysis.suggestedFolder}
-            <MoveRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
-          </button>
+          <div className="flex gap-2">
+            <button 
+              onClick={() => onAction(analysis.suggestedFolder)}
+              className="flex-1 py-3.5 bg-white text-slate-900 rounded-[20px] text-[13px] font-black transition-all hover:bg-indigo-50 flex items-center justify-center gap-2 active:scale-95 shadow-lg shadow-white/5"
+            >
+              <FolderOpen className="w-4 h-4" />
+              Ranger dans {analysis.suggestedFolder}
+            </button>
+            <button className="p-3.5 bg-white/5 hover:bg-white/10 text-white/60 rounded-[20px] transition-all active:scale-95">
+              <Tag className="w-4 h-4" />
+            </button>
+          </div>
         </div>
       ) : (
-        <div className="mt-auto py-8 text-center border-t border-slate-700/50">
-          <div className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">En attente d'analyse</div>
+        <div className="h-24 flex items-center justify-center border-t border-white/5">
+          <div className="animate-pulse flex items-center gap-2">
+            <div className="w-1.5 h-1.5 rounded-full bg-white/20"></div>
+            <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">En attente d'IA</span>
+          </div>
         </div>
       )}
     </div>

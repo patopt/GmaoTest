@@ -1,6 +1,16 @@
 import { logger } from '../utils/logger';
 import { EnrichedEmail } from '../types';
 
+export const getTotalInboxCount = async (): Promise<number> => {
+  try {
+    const response = await window.gapi.client.gmail.users.getProfile({ userId: 'me' });
+    return response.result.messagesTotal || 0;
+  } catch (err) {
+    logger.error("Impossible de récupérer le compte total", err);
+    return 0;
+  }
+};
+
 export const createGmailLabel = async (labelName: string): Promise<string | null> => {
   try {
     const response = await window.gapi.client.gmail.users.labels.create({
@@ -14,7 +24,6 @@ export const createGmailLabel = async (labelName: string): Promise<string | null
       const existing = list.result.labels.find((l: any) => l.name === labelName);
       return existing?.id || null;
     }
-    logger.error(`Erreur création label ${labelName}`, err);
     return null;
   }
 };
@@ -44,9 +53,8 @@ export const bulkOrganize = async (emails: EnrichedEmail[]) => {
   if (processed.length === 0) return 0;
 
   const folders = Array.from(new Set(processed.map(e => e.analysis!.suggestedFolder)));
-  logger.info(`Synchronisation de ${folders.length} dossiers suggérés...`);
-
   let count = 0;
+
   for (const folder of folders) {
     const labelId = await createGmailLabel(folder);
     if (!labelId) continue;
@@ -64,7 +72,6 @@ export const bulkOrganize = async (emails: EnrichedEmail[]) => {
         }
       });
       count += ids.length;
-      logger.success(`${ids.length} emails déplacés vers "${folder}"`);
     } catch (err) {
       logger.error(`Erreur déplacement groupé vers ${folder}`, err);
     }
