@@ -1,9 +1,10 @@
 
 import React, { useState } from 'react';
-import { ShieldCheck, Check, Cpu, Zap, Loader2, AlertCircle, Trash2, LogOut, Layers, Gauge } from 'lucide-react';
+import { ShieldCheck, Check, Cpu, Zap, Loader2, AlertCircle, Trash2, LogOut, Layers, Gauge, RefreshCcw } from 'lucide-react';
 import { GEMINI_MODELS, DEFAULT_AI_MODEL, AI_PROVIDERS, DEFAULT_PROVIDER } from '../constants';
 import { testAIConnection } from '../services/aiService';
 import { FolderStyle } from '../types';
+import { logger } from '../utils/logger';
 
 interface SetupProps {
   onSave: (provider: string, model: string, concurrency: number, folderStyle: FolderStyle) => void;
@@ -28,128 +29,81 @@ const Setup: React.FC<SetupProps> = ({ onSave, onReset, onLogout, isLoggedIn }) 
     setTesting(false);
   };
 
+  const resetPuter = () => {
+    if (confirm("Voulez-vous déconnecter Puter.js ? Vous devrez vous reconnecter au prochain appel IA.")) {
+      if (window.puter) {
+        window.puter.auth.signOut();
+        localStorage.removeItem('puter_session_token');
+        logger.warn("Session Puter réinitialisée.");
+        alert("Session Puter déconnectée.");
+      }
+    }
+  };
+
   return (
     <div className="min-h-[85vh] flex items-center justify-center p-6">
-      <div className="bg-slate-800/80 backdrop-blur-2xl p-8 rounded-[40px] border border-white/10 w-full max-w-3xl shadow-2xl space-y-8 overflow-y-auto max-h-[90vh]">
+      <div className="bg-[#0A0A0A] p-8 sm:p-12 rounded-[56px] border border-white/5 w-full max-w-3xl shadow-2xl space-y-10 overflow-y-auto max-h-[90vh]">
         <div className="flex justify-between items-center">
-          <h2 className="text-3xl font-black text-white flex items-center gap-3">
-            <Cpu className="text-indigo-400" /> Configuration Titan
+          <h2 className="text-3xl font-black text-white flex items-center gap-3 tracking-tighter">
+            Configuration Titan
           </h2>
           {isLoggedIn && (
-            <button 
-              onClick={onLogout}
-              className="flex items-center gap-2 px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-2xl text-xs font-bold transition-all border border-red-500/20"
-            >
-              <LogOut className="w-4 h-4" /> Déconnexion
+            <button onClick={onLogout} className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-2xl text-[10px] font-black uppercase tracking-widest transition-all">
+              Déconnexion
             </button>
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          {/* Moteur & Modèle */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
           <div className="space-y-6">
             <div className="space-y-3">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-1">Moteur d'IA</label>
+              <label className="text-[10px] font-black text-white/20 uppercase tracking-[0.3em] block px-1">Moteur IA</label>
               <div className="space-y-2">
                 {AI_PROVIDERS.map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => setProvider(p.id)}
-                    className={`w-full p-4 rounded-3xl border flex items-center gap-3 transition-all ${provider === p.id ? 'bg-indigo-600/10 border-indigo-500 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-400'}`}
-                  >
+                  <button key={p.id} onClick={() => setProvider(p.id)} className={`w-full p-5 rounded-[24px] border flex items-center gap-3 transition-all ${provider === p.id ? 'bg-indigo-600/10 border-indigo-500 text-white' : 'bg-white/5 border-white/5 text-white/40'}`}>
                     <Zap className="w-4 h-4" />
-                    <span className="text-xs font-bold">{p.name}</span>
+                    <span className="text-xs font-black">{p.name}</span>
                   </button>
                 ))}
               </div>
             </div>
-            <div className="space-y-3">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-1">Modèle de langage</label>
-              <select 
-                value={model} 
-                onChange={(e) => setModel(e.target.value)}
-                className="w-full bg-slate-900/50 border border-slate-700 rounded-3xl px-5 py-5 text-white text-xs outline-none appearance-none focus:ring-2 focus:ring-indigo-500"
-              >
-                {GEMINI_MODELS.map(m => <option key={m} value={m}>{m}</option>)}
-              </select>
-            </div>
+            
+            <button onClick={resetPuter} className="w-full py-4 border border-white/5 hover:bg-white/5 text-white/30 rounded-[24px] text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 transition-all">
+              <RefreshCcw className="w-3 h-3" /> Reset Connexion Puter
+            </button>
           </div>
 
-          {/* Turbo & Style */}
-          <div className="space-y-6">
+          <div className="space-y-10">
             <div className="space-y-3">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-1 flex items-center gap-2">
-                <Gauge className="w-3 h-3" /> Mode Turbo (Simultanéité)
-              </label>
+              <label className="text-[10px] font-black text-white/20 uppercase tracking-[0.3em] block px-1">Mode Turbo</label>
               <div className="grid grid-cols-3 gap-2">
                 {[3, 5, 7].map(n => (
-                  <button
-                    key={n}
-                    onClick={() => setConcurrency(n)}
-                    className={`p-4 rounded-2xl border font-black text-xs transition-all ${concurrency === n ? 'bg-purple-600 border-purple-400 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-500'}`}
-                  >
-                    x{n}
-                  </button>
+                  <button key={n} onClick={() => setConcurrency(n)} className={`p-5 rounded-[20px] border font-black text-xs transition-all ${concurrency === n ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-white/5 border-white/5 text-white/30'}`}>x{n}</button>
                 ))}
               </div>
-              <p className="text-[9px] text-slate-500 italic px-1">Nombre d'emails analysés en même temps.</p>
             </div>
 
             <div className="space-y-3">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-1 flex items-center gap-2">
-                <Layers className="w-3 h-3" /> Nomenclature Dossiers
-              </label>
-              <div className="space-y-2">
-                <button
-                  onClick={() => setFolderStyle('standard')}
-                  className={`w-full p-4 rounded-2xl border flex items-center justify-between transition-all ${folderStyle === 'standard' ? 'bg-indigo-600/10 border-indigo-500 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-500'}`}
-                >
-                  <span className="text-xs font-bold">Standard</span>
-                  <span className="text-[10px] opacity-40">"Dossier"</span>
-                </button>
-                <button
-                  onClick={() => setFolderStyle('numbered')}
-                  className={`w-full p-4 rounded-2xl border flex items-center justify-between transition-all ${folderStyle === 'numbered' ? 'bg-indigo-600/10 border-indigo-500 text-white' : 'bg-slate-900/50 border-slate-700 text-slate-500'}`}
-                >
-                  <span className="text-xs font-bold">Numéroté</span>
-                  <span className="text-[10px] opacity-40">"01. Dossier"</span>
-                </button>
+              <label className="text-[10px] font-black text-white/20 uppercase tracking-[0.3em] block px-1">Nomenclature Dossiers</label>
+              <div className="grid grid-cols-2 gap-2">
+                <button onClick={() => setFolderStyle('standard')} className={`p-5 rounded-[20px] border font-black text-[10px] uppercase tracking-widest transition-all ${folderStyle === 'standard' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-white/5 border-white/5 text-white/30'}`}>Standard</button>
+                <button onClick={() => setFolderStyle('numbered')} className={`p-5 rounded-[20px] border font-black text-[10px] uppercase tracking-widest transition-all ${folderStyle === 'numbered' ? 'bg-indigo-600 border-indigo-400 text-white' : 'bg-white/5 border-white/5 text-white/30'}`}>Numéroté</button>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="flex flex-col sm:flex-row items-center gap-4 pt-4">
-          <button
-            onClick={handleTest}
-            disabled={testing}
-            className="w-full sm:flex-1 py-5 bg-slate-700 hover:bg-slate-600 text-white rounded-3xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"
-          >
-            {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-            Tester IA
+        <div className="flex flex-col sm:flex-row items-center gap-4 pt-6">
+          <button onClick={handleTest} disabled={testing} className="w-full sm:flex-1 py-6 bg-white/5 hover:bg-white/10 text-white rounded-[32px] font-black text-xs flex items-center justify-center gap-2 transition-all">
+            {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />} Tester IA
           </button>
-          <button
-            onClick={() => onSave(provider, model, concurrency, folderStyle)}
-            className="w-full sm:flex-[2] py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-3xl font-black text-xs shadow-xl shadow-indigo-600/20 active:scale-95 transition-all"
-          >
-            Sauvegarder les réglages
+          <button onClick={() => onSave(provider, model, concurrency, folderStyle)} className="w-full sm:flex-[2] py-6 bg-indigo-600 hover:bg-indigo-500 text-white rounded-[32px] font-black text-xs shadow-xl active:scale-95 transition-all">
+            Appliquer la Configuration
           </button>
         </div>
 
-        {testResult && (
-          <div className={`p-5 rounded-3xl border flex items-center gap-4 ${testResult === 'success' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : 'bg-red-500/10 border-red-500/30 text-red-400'}`}>
-            {testResult === 'success' ? <Check className="w-5 h-5" /> : <AlertCircle className="w-5 h-5" />}
-            <span className="text-xs font-bold tracking-tight">{testResult === 'success' ? 'Moteur Titan prêt à l\'action !' : 'Erreur de connexion IA.'}</span>
-          </div>
-        )}
-
-        <div className="pt-8 border-t border-white/5">
-          <button
-            onClick={() => { if(confirm("Réinitialiser Titan ?")) onReset(); }}
-            className="w-full py-4 bg-transparent hover:bg-red-500/10 text-red-400/60 hover:text-red-400 rounded-2xl font-bold text-[10px] uppercase tracking-[0.2em] flex items-center justify-center gap-2 border border-dashed border-red-500/20 transition-all"
-          >
-            <Trash2 className="w-4 h-4" /> Réinitialiser tout
-          </button>
+        <div className="pt-10 border-t border-white/5 text-center">
+          <button onClick={onReset} className="text-[10px] font-black text-white/10 hover:text-red-400 uppercase tracking-[0.4em] transition-all">Réinitialiser Titan Total</button>
         </div>
       </div>
     </div>
