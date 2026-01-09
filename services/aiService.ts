@@ -3,33 +3,19 @@ import { GoogleGenAI } from "@google/genai";
 import { AIAnalysis, EmailMessage } from '../types';
 import { logger } from '../utils/logger';
 
-/**
- * Nettoie la réponse de l'IA pour extraire un JSON pur.
- * Gère les blocs Markdown, le texte superflu avant/après et les erreurs de formatage.
- */
 export const cleanAIResponse = (text: string): string => {
   let clean = text.trim();
-  
-  // Suppression des blocs de code Markdown
   if (clean.includes('```')) {
     clean = clean.replace(/```json|```/g, '').trim();
   }
-
-  // Isolation sémantique du JSON : on cherche de la première accolade à la dernière
   const firstBrace = clean.indexOf('{');
   const lastBrace = clean.lastIndexOf('}');
-  
   if (firstBrace !== -1 && lastBrace !== -1) {
     clean = clean.substring(firstBrace, lastBrace + 1);
   }
-  
   return clean;
 };
 
-/**
- * MOTEUR D'ANALYSE INDIVIDUEL TITAN (Unifié Puter/Gemini SDK)
- * Traite un email unique pour une précision maximale.
- */
 export const analyzeSingleEmail = async (
   email: EmailMessage, 
   model: string, 
@@ -38,81 +24,56 @@ export const analyzeSingleEmail = async (
 ): Promise<AIAnalysis> => {
   
   const prompt = `
-    RÔLE : ARCHITECTE SUPRÊME GMAIL.
-    MISSION : Analyser cet email avec une précision absolue.
+    RÔLE : ORGANISATEUR GMAIL TITAN.
     
-    DOSSIERS EXISTANTS DÉJÀ DÉTECTÉS : ${existingFolders.length > 0 ? existingFolders.join(', ') : 'Aucun'}
-    CONSIGNE : Si l'email appartient à un domaine déjà couvert par un dossier existant, réutilise-le EXACTEMENT.
+    DOSSIERS ET TAGS DÉJÀ EXISTANTS DANS LE GMAIL DE L'UTILISATEUR : 
+    ${existingFolders.length > 0 ? existingFolders.join(', ') : 'Aucun'}
 
+    MISSION : Analyser cet email. 
+    CONSIGNE CRITIQUE : Tu DOIS réutiliser un dossier de la liste ci-dessus si l'email correspond à une thématique déjà existante. Ne crée un nouveau dossier que si c'est strictement nécessaire.
+    
     EMAIL :
     De : ${email.from}
     Objet : ${email.subject}
-    Snippet : ${email.snippet}
+    Contenu : ${email.snippet}
 
-    RÉPONDS UNIQUEMENT PAR UN OBJET JSON VALIDE (SANS TEXTE AUTOUR) :
+    RÉPONDS UNIQUEMENT PAR UN OBJET JSON VALIDE :
     {
       "category": "Travail|Personnel|Finance|Social|Urgent|Autre",
-      "tags": ["Tag1", "Tag2"],
-      "suggestedFolder": "NOM DU DOSSIER",
-      "summary": "Résumé en 5 mots max",
+      "tags": ["TagExistantOuNouveau"],
+      "suggestedFolder": "NOM_DU_DOSSIER_EXISTANT_OU_NOUVEAU",
+      "summary": "Résumé de 5 mots",
       "sentiment": "Positif|Neutre|Négatif"
     }
   `;
 
   try {
     let responseText = "";
-
     if (provider === 'puter') {
-      if (!window.puter) {
-        throw new Error("Puter.js n'est pas disponible dans le window.");
-      }
-      
-      // Appel Puter.js v2 tel que documenté
-      const response = await window.puter.ai.chat(prompt, { 
-        model: model 
-      });
-
-      // Dans Puter.js v2, la réponse peut être un objet avec .text ou une string
+      const response = await window.puter.ai.chat(prompt, { model });
       responseText = (typeof response === 'string') ? response : (response.text || response.toString());
-      
-      if (!responseText) {
-        throw new Error("Réponse vide de Puter.ai");
-      }
     } else {
-      // Version SDK Gemini Natif
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
         model: model,
         contents: prompt,
-        config: { 
-          responseMimeType: "application/json",
-          temperature: 0.1,
-        }
+        config: { responseMimeType: "application/json", temperature: 0.1 }
       });
       responseText = response.text || "";
     }
 
     const cleanedJson = cleanAIResponse(responseText);
     const parsed = JSON.parse(cleanedJson);
-    
-    // Validation minimale des champs requis
-    if (!parsed.suggestedFolder || !parsed.category) {
-      throw new Error("JSON incomplet");
-    }
-
     return parsed;
   } catch (err) {
-    logger.error(`Erreur IA (${provider}) pour : ${email.subject}`, err);
+    logger.error(`Erreur IA pour : ${email.subject}`, err);
     throw err;
   }
 };
 
-/**
- * Teste la connexion au provider IA choisi.
- */
 export const testAIConnection = async (provider: string, model: string): Promise<boolean> => {
   try {
-    const testPrompt = "Dis exactement 'OK'";
+    const testPrompt = "Réponds 'OK'";
     if (provider === 'puter') {
       if (!window.puter) return false;
       const resp = await window.puter.ai.chat(testPrompt, { model });
@@ -123,8 +84,5 @@ export const testAIConnection = async (provider: string, model: string): Promise
       const resp = await ai.models.generateContent({ model, contents: testPrompt });
       return resp.text?.toUpperCase().includes('OK') || false;
     }
-  } catch (err) { 
-    logger.error(`Échec test connexion IA (${provider})`, err);
-    return false; 
-  }
+  } catch (err) { return false; }
 };

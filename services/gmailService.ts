@@ -7,8 +7,20 @@ export const getTotalInboxCount = async (): Promise<number> => {
     const response = await window.gapi.client.gmail.users.getProfile({ userId: 'me' });
     return response.result.messagesTotal || 0;
   } catch (err) {
-    logger.error("Erreur GAPI Profil (Token expiré ?)", err);
+    logger.error("Erreur GAPI Profil", err);
     throw err;
+  }
+};
+
+export const getUserLabels = async (): Promise<string[]> => {
+  try {
+    const response = await window.gapi.client.gmail.users.labels.list({ userId: 'me' });
+    return (response.result.labels || [])
+      .filter((l: any) => l.type === 'user')
+      .map((l: any) => l.name);
+  } catch (err) {
+    logger.error("Erreur récupération labels", err);
+    return [];
   }
 };
 
@@ -50,7 +62,7 @@ export const renameAllLabelsToStyle = async (style: FolderStyle) => {
     
     let count = 1;
     for (const label of labels) {
-      let cleanName = label.name.replace(/^\d{2}\.\s/, ''); // Nettoie l'ancien index si présent
+      let cleanName = label.name.replace(/^\d{2}\.\s/, '');
       let newName = cleanName;
       
       if (style === 'numbered') {
@@ -67,7 +79,7 @@ export const renameAllLabelsToStyle = async (style: FolderStyle) => {
       }
       count++;
     }
-    logger.success("Style de nomenclature appliqué à tous les dossiers.");
+    logger.success("Style de nomenclature appliqué.");
   } catch (err) {
     logger.error("Erreur lors du renommage des dossiers", err);
   }
