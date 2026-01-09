@@ -1,5 +1,6 @@
 
 import { logger } from '../utils/logger';
+import { FolderStyle } from '../types';
 
 export const getTotalInboxCount = async (): Promise<number> => {
   try {
@@ -11,34 +12,43 @@ export const getTotalInboxCount = async (): Promise<number> => {
   }
 };
 
-export const createGmailLabel = async (labelName: string): Promise<string | null> => {
+let folderCounter = 1;
+
+export const createGmailLabel = async (labelName: string, style: FolderStyle = 'standard'): Promise<string | null> => {
+  let finalName = labelName;
+  if (style === 'numbered') {
+    const prefix = folderCounter.toString().padStart(2, '0');
+    finalName = `${prefix}. ${labelName}`;
+  }
+
   try {
     const response = await window.gapi.client.gmail.users.labels.create({
       userId: 'me',
       resource: { 
-        name: labelName,
+        name: finalName,
         labelListVisibility: 'labelShow',
         messageListVisibility: 'show'
       }
     });
-    logger.success(`Label créé : ${labelName}`);
+    logger.success(`Label créé : ${finalName}`);
+    folderCounter++;
     return response.result.id;
   } catch (err: any) {
     if (err.status === 409) {
       const list = await window.gapi.client.gmail.users.labels.list({ userId: 'me' });
-      const existing = list.result.labels.find((l: any) => l.name === labelName);
+      const existing = list.result.labels.find((l: any) => l.name === finalName || l.name.endsWith(labelName));
       return existing?.id || null;
     }
-    logger.error(`Erreur création label ${labelName}`, err);
+    logger.error(`Erreur création label ${finalName}`, err);
     return null;
   }
 };
 
-export const applyTagsToEmail = async (emailId: string, tags: string[]) => {
+export const applyTagsToEmail = async (emailId: string, tags: string[], style: FolderStyle = 'standard') => {
   try {
     const labelIds = [];
     for (const tag of tags) {
-      const id = await createGmailLabel(tag);
+      const id = await createGmailLabel(tag, style);
       if (id) labelIds.push(id);
     }
 
@@ -59,9 +69,9 @@ export const applyTagsToEmail = async (emailId: string, tags: string[]) => {
   }
 };
 
-export const moveEmailsToLabel = async (ids: string[], labelName: string) => {
+export const moveEmailsToLabel = async (ids: string[], labelName: string, style: FolderStyle = 'standard') => {
   try {
-    const labelId = await createGmailLabel(labelName);
+    const labelId = await createGmailLabel(labelName, style);
     if (!labelId) return false;
 
     await window.gapi.client.gmail.users.messages.batchModify({

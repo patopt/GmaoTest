@@ -1,12 +1,12 @@
 
 import React, { useState } from 'react';
-import { ChevronDown, ChevronRight, Play, CheckCircle2, Layers, Cpu, Zap } from 'lucide-react';
+import { ChevronDown, ChevronRight, Play, CheckCircle2, Layers, Cpu, Zap, AlertTriangle, RefreshCcw } from 'lucide-react';
 import { EmailBatch, EnrichedEmail } from '../types';
 import EmailCard from './EmailCard';
 
 interface BatchAccordionProps {
   batch: EmailBatch;
-  onAnalyze: () => void;
+  onAnalyze: (retryOnly?: boolean) => void;
   onAction: (emailId: string, folder: string) => void;
   onIgnore: (id: string) => void;
   isLoading: boolean;
@@ -15,6 +15,7 @@ interface BatchAccordionProps {
 const BatchAccordion: React.FC<BatchAccordionProps> = ({ batch, onAnalyze, onAction, onIgnore, isLoading }) => {
   const [isOpen, setIsOpen] = useState(false);
   const processedCount = batch.emails.filter(e => e.processed).length;
+  const failedCount = batch.emails.filter(e => e.failed && !e.processed).length;
   const isFullyProcessed = processedCount === batch.emails.length && batch.emails.length > 0;
 
   return (
@@ -43,11 +44,26 @@ const BatchAccordion: React.FC<BatchAccordionProps> = ({ batch, onAnalyze, onAct
                <span className="text-[9px] sm:text-[11px] font-black text-white/30 uppercase tracking-tighter">
                 {processedCount} / {batch.emails.length} OK
                </span>
+               {failedCount > 0 && (
+                 <span className="flex items-center gap-1 text-red-400 text-[9px] font-black uppercase">
+                   <AlertTriangle className="w-3 h-3" /> {failedCount} Échecs
+                 </span>
+               )}
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
+          {failedCount > 0 && !isLoading && (
+            <button 
+              onClick={(e) => { e.stopPropagation(); onAnalyze(true); }}
+              className="bg-red-500/20 text-red-400 p-3 sm:px-4 sm:py-2 rounded-xl font-black text-[9px] flex items-center gap-2 hover:bg-red-500/30 transition-all border border-red-500/30"
+              title="Réessayer uniquement les échecs"
+            >
+              <RefreshCcw className="w-3 h-3" /> <span className="hidden sm:inline">Réessayer Échecs</span>
+            </button>
+          )}
+
           {!isFullyProcessed && (
             <button 
               onClick={(e) => { e.stopPropagation(); onAnalyze(); }}
