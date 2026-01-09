@@ -1,3 +1,4 @@
+
 export interface EmailMessage {
   id: string;
   threadId: string;
@@ -20,6 +21,7 @@ export interface AIAnalysis {
 export interface EnrichedEmail extends EmailMessage {
   analysis?: AIAnalysis;
   processed?: boolean;
+  organized?: boolean;
 }
 
 export type TaskStatus = 'pending' | 'running' | 'stopped' | 'completed' | 'error' | 'cooldown';
@@ -34,10 +36,10 @@ export interface HarvestTranche {
   nextPageToken?: string | null;
 }
 
+// Added EmailBatch interface to resolve missing export error in components/BatchAccordion.tsx
 export interface EmailBatch {
   id: number;
   emails: EnrichedEmail[];
-  status: TaskStatus;
 }
 
 declare global {

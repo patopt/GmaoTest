@@ -1,10 +1,11 @@
+
 import React, { useState } from 'react';
-import { ShieldCheck, Check, Cpu, Zap, Loader2, AlertCircle, Trash2, LogOut, Key } from 'lucide-react';
+import { ShieldCheck, Check, Cpu, Zap, Loader2, AlertCircle, Trash2, LogOut } from 'lucide-react';
 import { GEMINI_MODELS, DEFAULT_AI_MODEL, AI_PROVIDERS, DEFAULT_PROVIDER } from '../constants';
 import { testAIConnection } from '../services/aiService';
 
 interface SetupProps {
-  onSave: (provider: string, model: string, apiKey: string) => void;
+  onSave: (provider: string, model: string) => void;
   onReset: () => void;
   onLogout: () => void;
   isLoggedIn: boolean;
@@ -13,14 +14,14 @@ interface SetupProps {
 const Setup: React.FC<SetupProps> = ({ onSave, onReset, onLogout, isLoggedIn }) => {
   const [provider, setProvider] = useState(localStorage.getItem('ai_provider') || DEFAULT_PROVIDER);
   const [model, setModel] = useState(localStorage.getItem('ai_model') || DEFAULT_AI_MODEL);
-  const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<'success' | 'error' | null>(null);
 
   const handleTest = async () => {
     setTesting(true);
     setTestResult(null);
-    const ok = await testAIConnection(provider, model, apiKey);
+    // testAIConnection now uses process.env.API_KEY internally
+    const ok = await testAIConnection(provider, model);
     setTestResult(ok ? 'success' : 'error');
     setTesting(false);
   };
@@ -71,22 +72,6 @@ const Setup: React.FC<SetupProps> = ({ onSave, onReset, onLogout, isLoggedIn }) 
             </div>
           </div>
 
-          {provider === 'gemini-sdk' && (
-            <div className="space-y-3 animate-in fade-in slide-in-from-top-2">
-              <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest block px-1">Clé API Gemini (AI Studio)</label>
-              <div className="relative">
-                <input 
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder="Introduisez votre clé API..."
-                  className="w-full bg-slate-900/50 border border-slate-700 rounded-3xl pl-12 pr-6 py-5 text-white text-xs outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <Key className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-slate-500" />
-              </div>
-            </div>
-          )}
-
           <div className="flex flex-col sm:flex-row items-center gap-4 pt-4">
             <button
               onClick={handleTest}
@@ -94,10 +79,10 @@ const Setup: React.FC<SetupProps> = ({ onSave, onReset, onLogout, isLoggedIn }) 
               className="w-full sm:flex-1 py-5 bg-slate-700 hover:bg-slate-600 text-white rounded-3xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-lg active:scale-95"
             >
               {testing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-              Tester
+              Tester la connexion
             </button>
             <button
-              onClick={() => onSave(provider, model, apiKey)}
+              onClick={() => onSave(provider, model)}
               className="w-full sm:flex-[2] py-5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-3xl font-black text-xs shadow-xl shadow-indigo-600/20 active:scale-95 transition-all"
             >
               Enregistrer
