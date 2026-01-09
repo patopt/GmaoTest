@@ -45,10 +45,17 @@ export interface EmailBatch {
 export type ViewMode = 'pipeline' | 'mail' | 'training' | 'bilan';
 export type FolderStyle = 'standard' | 'numbered';
 
+export interface TrainingStep {
+  email: EnrichedEmail;
+  completed: boolean;
+  userChoice?: string;
+}
+
 declare global {
   interface Window {
     puter: any;
     google: any;
     gapi: any;
+    tokenClient: any;
   }
 }

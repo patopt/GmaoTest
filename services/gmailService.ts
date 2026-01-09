@@ -7,8 +7,8 @@ export const getTotalInboxCount = async (): Promise<number> => {
     const response = await window.gapi.client.gmail.users.getProfile({ userId: 'me' });
     return response.result.messagesTotal || 0;
   } catch (err) {
-    logger.error("Impossible de récupérer le compte total", err);
-    return 0;
+    logger.error("Erreur GAPI Profil (Token expiré ?)", err);
+    throw err;
   }
 };
 
@@ -39,8 +39,37 @@ export const createGmailLabel = async (labelName: string, style: FolderStyle = '
       const existing = list.result.labels.find((l: any) => l.name === finalName || l.name.endsWith(labelName));
       return existing?.id || null;
     }
-    logger.error(`Erreur création label ${finalName}`, err);
     return null;
+  }
+};
+
+export const renameAllLabelsToStyle = async (style: FolderStyle) => {
+  try {
+    const response = await window.gapi.client.gmail.users.labels.list({ userId: 'me' });
+    const labels = response.result.labels.filter((l: any) => l.type === 'user');
+    
+    let count = 1;
+    for (const label of labels) {
+      let cleanName = label.name.replace(/^\d{2}\.\s/, ''); // Nettoie l'ancien index si présent
+      let newName = cleanName;
+      
+      if (style === 'numbered') {
+        newName = `${count.toString().padStart(2, '0')}. ${cleanName}`;
+      }
+
+      if (label.name !== newName) {
+        await window.gapi.client.gmail.users.labels.update({
+          userId: 'me',
+          id: label.id,
+          resource: { name: newName }
+        });
+        logger.info(`Renommage : ${label.name} -> ${newName}`);
+      }
+      count++;
+    }
+    logger.success("Style de nomenclature appliqué à tous les dossiers.");
+  } catch (err) {
+    logger.error("Erreur lors du renommage des dossiers", err);
   }
 };
 
@@ -51,20 +80,15 @@ export const applyTagsToEmail = async (emailId: string, tags: string[], style: F
       const id = await createGmailLabel(tag, style);
       if (id) labelIds.push(id);
     }
-
     if (labelIds.length > 0) {
       await window.gapi.client.gmail.users.messages.batchModify({
         userId: 'me',
-        resource: {
-          ids: [emailId],
-          addLabelIds: labelIds
-        }
+        resource: { ids: [emailId], addLabelIds: labelIds }
       });
       return true;
     }
     return false;
   } catch (err) {
-    logger.error(`Erreur tags pour ${emailId}`, err);
     return false;
   }
 };
@@ -73,18 +97,12 @@ export const moveEmailsToLabel = async (ids: string[], labelName: string, style:
   try {
     const labelId = await createGmailLabel(labelName, style);
     if (!labelId) return false;
-
     await window.gapi.client.gmail.users.messages.batchModify({
       userId: 'me',
-      resource: {
-        ids: ids,
-        addLabelIds: [labelId],
-        removeLabelIds: ['INBOX']
-      }
+      resource: { ids: ids, addLabelIds: [labelId], removeLabelIds: ['INBOX'] }
     });
     return true;
   } catch (err) {
-    logger.error(`Erreur déplacement groupé vers ${labelName}`, err);
     return false;
   }
 };
