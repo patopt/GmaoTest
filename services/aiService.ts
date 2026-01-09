@@ -1,42 +1,49 @@
-import { AIAnalysis, EmailMessage } from '../types';
-import { analyzeEmailsWithPuter } from './puterService';
-import { analyzeEmailsWithGemini } from './geminiService';
-import { logger } from '../utils/logger';
 import { GoogleGenAI } from "@google/genai";
-import { AI_MODEL } from '../constants';
+import { AIAnalysis, EmailMessage } from '../types';
+import { logger } from '../utils/logger';
 
-export type AIProvider = 'puter' | 'gemini-sdk';
-
-export const analyzeEmails = async (
-  emails: EmailMessage[],
-  provider: AIProvider
-): Promise<Record<string, AIAnalysis>> => {
-  logger.info(`Utilisation du fournisseur IA : ${provider}`);
-  if (provider === 'puter') {
-    return analyzeEmailsWithPuter(emails);
-  } else {
-    return analyzeEmailsWithGemini(emails);
+export const cleanAIResponse = (text: string): string => {
+  let clean = text.trim();
+  if (clean.includes('```')) {
+    clean = clean.replace(/```json|```/g, '').trim();
   }
+  return clean;
 };
 
-export const testAIConnection = async (provider: AIProvider): Promise<boolean> => {
-  const testPrompt = "Répond uniquement par le mot 'OK' si tu reçois ce message.";
+export const analyzeWithGeminiSDK = async (emails: EmailMessage[], model: string): Promise<Record<string, AIAnalysis>> => {
+  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const prompt = `Analyse ces emails et retourne UNIQUEMENT un objet JSON (ID en clé) : ${JSON.stringify(emails)}`;
   
+  const response = await ai.models.generateContent({
+    model: model,
+    contents: prompt,
+    config: { responseMimeType: "application/json" }
+  });
+  
+  return JSON.parse(response.text);
+};
+
+export const analyzeWithPuter = async (emails: EmailMessage[], model: string): Promise<Record<string, AIAnalysis>> => {
+  const prompt = `Tu es un expert Gmail. Analyse ces emails et retourne un objet JSON (clé=ID). Format: {"id": {"category": "...", "tags": [], "suggestedFolder": "...", "summary": "...", "sentiment": "..."}}. Emails: ${JSON.stringify(emails)}`;
+  
+  const response = await window.puter.ai.chat(prompt, { model: model });
+  const clean = cleanAIResponse(response.text);
+  return JSON.parse(clean);
+};
+
+export const testAIConnection = async (provider: string, model: string): Promise<boolean> => {
+  const prompt = "Répond 'OK' en minuscules.";
   try {
     if (provider === 'puter') {
-      if (!window.puter) return false;
-      const response = await window.puter.ai.chat(testPrompt, { model: AI_MODEL });
-      return response.text.toLowerCase().includes('ok');
+      const resp = await window.puter.ai.chat(prompt, { model });
+      return resp.text.toLowerCase().includes('ok');
     } else {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const response = await ai.models.generateContent({
-        model: AI_MODEL,
-        contents: testPrompt
-      });
-      return response.text.toLowerCase().includes('ok');
+      const resp = await ai.models.generateContent({ model, contents: prompt });
+      return resp.text.toLowerCase().includes('ok');
     }
   } catch (err) {
-    logger.error(`Échec du test IA (${provider})`, err);
+    logger.error("Test IA échoué", err);
     return false;
   }
 };
