@@ -1,4 +1,5 @@
 import { logger } from '../utils/logger';
+import { EnrichedEmail } from '../types';
 
 export const createGmailLabel = async (labelName: string): Promise<string | null> => {
   try {
@@ -9,7 +10,6 @@ export const createGmailLabel = async (labelName: string): Promise<string | null
     return response.result.id;
   } catch (err: any) {
     if (err.status === 409) {
-      // Label already exists, find its ID
       const list = await window.gapi.client.gmail.users.labels.list({ userId: 'me' });
       const existing = list.result.labels.find((l: any) => l.name === labelName);
       return existing?.id || null;
@@ -21,11 +21,9 @@ export const createGmailLabel = async (labelName: string): Promise<string | null
 
 export const moveEmailToLabel = async (messageId: string, labelName: string) => {
   try {
-    // 1. Create label if not exists
     const labelId = await createGmailLabel(labelName);
     if (!labelId) return false;
 
-    // 2. Modify message labels
     await window.gapi.client.gmail.users.messages.modify({
       userId: 'me',
       id: messageId,
@@ -41,22 +39,35 @@ export const moveEmailToLabel = async (messageId: string, labelName: string) => 
   }
 };
 
-export const applyBatchLabels = async (messageIds: string[], labelName: string) => {
-  try {
-    const labelId = await createGmailLabel(labelName);
-    if (!labelId) return false;
+export const bulkOrganize = async (emails: EnrichedEmail[]) => {
+  const processed = emails.filter(e => e.processed && e.analysis?.suggestedFolder);
+  if (processed.length === 0) return 0;
 
-    await window.gapi.client.gmail.users.messages.batchModify({
-      userId: 'me',
-      resource: {
-        ids: messageIds,
-        addLabelIds: [labelId],
-        removeLabelIds: ['INBOX']
-      }
-    });
-    return true;
-  } catch (err) {
-    logger.error("Erreur batch modify labels", err);
-    return false;
+  const folders = Array.from(new Set(processed.map(e => e.analysis!.suggestedFolder)));
+  logger.info(`Synchronisation de ${folders.length} dossiers suggérés...`);
+
+  let count = 0;
+  for (const folder of folders) {
+    const labelId = await createGmailLabel(folder);
+    if (!labelId) continue;
+
+    const emailsInFolder = processed.filter(e => e.analysis!.suggestedFolder === folder);
+    const ids = emailsInFolder.map(e => e.id);
+
+    try {
+      await window.gapi.client.gmail.users.messages.batchModify({
+        userId: 'me',
+        resource: {
+          ids: ids,
+          addLabelIds: [labelId],
+          removeLabelIds: ['INBOX']
+        }
+      });
+      count += ids.length;
+      logger.success(`${ids.length} emails déplacés vers "${folder}"`);
+    } catch (err) {
+      logger.error(`Erreur déplacement groupé vers ${folder}`, err);
+    }
   }
+  return count;
 };
