@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import Header from './components/Header';
 import EmailCard from './components/EmailCard';
@@ -7,7 +6,6 @@ import LogConsole from './components/LogConsole';
 import { GMAIL_DISCOVERY_DOCS, GMAIL_SCOPES } from './constants';
 import { EmailMessage, EnrichedEmail } from './types';
 import { analyzeEmails, AIProvider } from './services/aiService';
-// Fixed: Added Cpu to the list of imported icons from lucide-react
 import { Loader2, RefreshCw, AlertTriangle, Inbox, CheckCircle2, ExternalLink, Cpu } from 'lucide-react';
 import { logger } from './utils/logger';
 
@@ -157,6 +155,7 @@ export default function App() {
       });
 
       setStatusText(`Gemini (${aiProvider === 'puter' ? 'Puter' : 'SDK'}) analyse...`);
+      // Utilisation du dispatcher analyzeEmails qui gère le choix du fournisseur
       const analysisResults = await analyzeEmails(detailedEmails, aiProvider);
 
       setEmails(detailedEmails.map(email => ({
@@ -165,8 +164,8 @@ export default function App() {
       })));
       
     } catch (err: any) {
-      logger.error("Erreur Fetch", err);
-      setError({ message: "Erreur lors du chargement." });
+      logger.error("Erreur Fetch/Analyse", err);
+      setError({ message: "Erreur lors du chargement ou de l'analyse." });
     } finally {
       setLoading(false);
     }
