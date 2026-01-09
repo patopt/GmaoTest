@@ -123,7 +123,6 @@ export default function App() {
         pageToken = response.result.nextPageToken || null;
 
         const detailed: EnrichedEmail[] = [];
-        // Optimisation MAX: Parallélisme 10 pour une vitesse éclair
         const CONCURRENCY = 10;
         for (let i = 0; i < messages.length; i += CONCURRENCY) {
           if (stopSignal.current) break;
@@ -136,14 +135,14 @@ export default function App() {
               threadId: res.result.threadId,
               snippet: res.result.snippet,
               internalDate: res.result.internalDate,
-              subject: h.find((x:any) => x.name === 'Subject')?.value || '',
-              from: h.find((x:any) => x.name === 'From')?.value || '',
+              subject: h.find((x:any) => x.name === 'Subject')?.value || 'Sans objet',
+              from: h.find((x:any) => x.name === 'From')?.value || 'Inconnu',
               processed: false,
               organized: false
             } as EnrichedEmail;
           }));
           detailed.push(...chunkDetails);
-          await new Promise(r => setTimeout(r, 50)); // Throttling minimal
+          await new Promise(r => setTimeout(r, 50));
         }
 
         currentEmails = [...currentEmails, ...detailed];
@@ -161,12 +160,11 @@ export default function App() {
       if (stopSignal.current) {
         updateTranche(trancheId, { status: 'stopped' });
       } else {
-        updateTranche(trancheId, { status: 'cooldown' });
-        logger.success(`Bloc ${trancheId} terminé !`);
-        setTimeout(() => updateTranche(trancheId, { status: 'completed' }), 1000);
+        updateTranche(trancheId, { status: 'completed' });
+        logger.success(`Bloc ${trancheId} terminé ! Prêt pour l'analyse.`);
       }
     } catch (err: any) {
-      logger.error("Mission échouée", err);
+      logger.error("Mission récolte échouée", err);
       updateTranche(trancheId, { status: 'error' });
     } finally {
       setLoading(false);
@@ -177,7 +175,8 @@ export default function App() {
   const handleBatchAnalyze = async (trancheId: number, batchIndex: number, emailsToAnalyze: EnrichedEmail[]) => {
     if (loading) return;
     setLoading(true);
-    setStatusText(`Intelligence IA : Analyse mail par mail (${emailsToAnalyze.length})...`);
+    setStatusText(`Cerveau IA : Analyse individuelle de ${emailsToAnalyze.length} emails...`);
+    
     try {
       const results = config.provider === 'puter' 
         ? await analyzeWithPuter(emailsToAnalyze, config.model)
@@ -186,14 +185,22 @@ export default function App() {
       const tranche = tranches.find(t => t.id === trancheId);
       if (tranche) {
         const updatedEmails = tranche.emails.map(e => {
-          if (results[e.id]) return { ...e, analysis: results[e.id], processed: true };
+          const analysis = results[e.id];
+          if (analysis) {
+            // LOG INDIVIDUEL DÉTAILLÉ
+            logger.info(`Email Analysé [${e.subject?.slice(0, 30)}...] -> Catégorie: ${analysis.category} | Dossier: ${analysis.suggestedFolder}`);
+            return { ...e, analysis, processed: true };
+          }
           return e;
         });
+        
         updateTranche(trancheId, { emails: updatedEmails });
-        logger.success(`Batch ${batchIndex + 1} : ${Object.keys(results).length} emails analysés.`);
+        
+        const count = Object.keys(results).length;
+        logger.success(`BATCH ${batchIndex + 1} TERMINÉ : ${count} emails ont reçu une intelligence artificielle.`);
       }
     } catch (e) {
-      logger.error("Erreur IA", e);
+      logger.error("Échec de l'analyse du groupe", e);
     } finally {
       setLoading(false);
       setStatusText('');
@@ -215,7 +222,7 @@ export default function App() {
     }
     setLoading(false);
     setStatusText('');
-    logger.success(`${count} emails taggués avec succès.`);
+    logger.success(`${count} emails taggués physiquement dans Gmail.`);
   };
 
   const createFolders = async () => {
@@ -224,17 +231,17 @@ export default function App() {
       if (e.analysis?.suggestedFolder) folders.add(e.analysis.suggestedFolder);
     }));
 
-    if (folders.size === 0) return logger.warn("Aucune suggestion de dossier à créer.");
+    if (folders.size === 0) return logger.warn("Aucune suggestion de dossier détectée. Analysez des emails d'abord.");
     
     setLoading(true);
-    setStatusText("Création de la structure Gmail...");
+    setStatusText("Déploiement de l'architecture...");
     for (const f of Array.from(folders)) {
       await createGmailLabel(f);
       await new Promise(r => setTimeout(r, 300));
     }
     setLoading(false);
     setStatusText("");
-    logger.success(`${folders.size} dossiers créés.`);
+    logger.success(`Architecture prête : ${folders.size} dossiers créés.`);
   };
 
   const globalFetched = useMemo(() => tranches.reduce((acc, t) => acc + t.fetchedCount, 0), [tranches]);
@@ -284,20 +291,20 @@ export default function App() {
           </div>
         ) : (
           <div className="animate-in fade-in slide-in-from-bottom-12 duration-1000">
-            {/* Action Bar */}
+            {/* Command Center Action Bar */}
             <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-10">
                <button 
                   onClick={() => setIsAutoPilotActive(!isAutoPilotActive)}
                   className={`py-5 rounded-[32px] font-black text-xs flex items-center justify-center gap-3 transition-all active:scale-95 border ${
-                    isAutoPilotActive ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-white text-black border-white'
+                    isAutoPilotActive ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-white text-black border-white shadow-xl shadow-white/5'
                   }`}
                >
-                 <Rocket className="w-4 h-4" /> Auto-Pilote
+                 <Rocket className={`w-4 h-4 ${isAutoPilotActive ? 'animate-bounce' : ''}`} /> Auto-Pilote
                </button>
-               <button onClick={createFolders} className="py-5 bg-white/5 border border-white/10 rounded-[32px] font-black text-[10px] text-white/60 hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2">
+               <button onClick={createFolders} className="py-5 bg-white/5 border border-white/10 rounded-[32px] font-black text-[10px] text-white/60 hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2 hover:bg-white/10">
                  <FolderPlus className="w-4 h-4" /> Créer Dossiers
                </button>
-               <button onClick={applyAllTags} className="py-5 bg-white/5 border border-white/10 rounded-[32px] font-black text-[10px] text-white/60 hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2">
+               <button onClick={applyAllTags} className="py-5 bg-white/5 border border-white/10 rounded-[32px] font-black text-[10px] text-white/60 hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2 hover:bg-white/10">
                  <Tag className="w-4 h-4" /> Appliquer Tags
                </button>
                <button onClick={() => setShowSetup(true)} className="py-5 bg-white/5 border border-white/10 rounded-[32px] flex items-center justify-center hover:bg-white/10 transition-all">
@@ -305,28 +312,45 @@ export default function App() {
                </button>
             </div>
 
-            <div className="bg-white/[0.02] backdrop-blur-2xl p-10 rounded-[48px] border border-white/5 mb-12 shadow-2xl">
-               <div className="flex justify-between items-end mb-4">
-                  <span className="text-6xl font-black text-white tracking-tighter">{progressPercent}%</span>
-                  <span className="text-xs font-bold text-white/30 mb-2 uppercase tracking-widest">{globalFetched.toLocaleString()} récoltés</span>
+            <div className="bg-white/[0.02] backdrop-blur-2xl p-10 rounded-[48px] border border-white/5 mb-12 shadow-2xl relative overflow-hidden group">
+               <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                  <ShieldAlert className="w-24 h-24 text-white" />
                </div>
-               <div className="h-2 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-500 rounded-full transition-all duration-1000" style={{ width: `${progressPercent}%` }} />
+               <div className="flex justify-between items-end mb-4 relative z-10">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-black text-indigo-400 uppercase tracking-[0.4em] mb-2">Statut Global</span>
+                    <span className="text-7xl font-black text-white tracking-tighter">{progressPercent}%</span>
+                  </div>
+                  <span className="text-xs font-bold text-white/30 mb-2 uppercase tracking-widest">{globalFetched.toLocaleString()} / {totalInboxCount.toLocaleString()} emails</span>
+               </div>
+               <div className="h-2.5 bg-white/5 rounded-full overflow-hidden p-0.5">
+                  <div className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-indigo-500 rounded-full transition-all duration-1000 shadow-[0_0_15px_rgba(99,102,241,0.5)]" style={{ width: `${progressPercent}%` }} />
                </div>
             </div>
 
             {loading && (
-              <div className="fixed bottom-10 inset-x-0 flex justify-center z-50 pointer-events-none">
-                 <div className="bg-white text-black px-8 py-5 rounded-full shadow-2xl flex items-center gap-5 animate-in slide-in-from-bottom-12 pointer-events-auto border border-black/10">
-                    <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
-                    <span className="font-black text-[9px] tracking-[0.2em] uppercase">{statusText}</span>
-                    <button onClick={() => stopSignal.current = true} className="ml-4 p-2 bg-red-500 text-white rounded-full"><StopCircle className="w-5 h-5" /></button>
+              <div className="fixed bottom-12 inset-x-0 flex justify-center z-[100] pointer-events-none">
+                 <div className="bg-white text-black px-8 py-6 rounded-[32px] shadow-3xl flex items-center gap-6 animate-in slide-in-from-bottom-12 pointer-events-auto border-4 border-black">
+                    <div className="relative">
+                       <Loader2 className="w-7 h-7 animate-spin text-indigo-600" />
+                       <div className="absolute inset-0 blur-lg bg-indigo-500/50 animate-pulse"></div>
+                    </div>
+                    <span className="font-black text-[11px] tracking-[0.2em] uppercase">{statusText}</span>
+                    <div className="h-6 w-px bg-black/10 mx-2"></div>
+                    <button onClick={() => stopSignal.current = true} className="p-3 bg-red-500 text-white rounded-2xl hover:bg-red-600 transition-all active:scale-90"><StopCircle className="w-6 h-6" /></button>
                  </div>
               </div>
             )}
 
-            <div className="space-y-6">
-               <h2 className="text-2xl font-black text-white tracking-tight px-4">Flux de Travail</h2>
+            <div className="space-y-8">
+               <div className="flex items-center justify-between px-4">
+                  <h2 className="text-3xl font-black text-white tracking-tight">Flux de Travail</h2>
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                    <span className="text-[10px] font-black text-white/30 uppercase tracking-widest">Connecté</span>
+                  </div>
+               </div>
+               
                {tranches.map(t => (
                  <MissionCard 
                     key={t.id} tranche={t} isLoading={loading}
@@ -351,6 +375,7 @@ function MissionCard({ tranche, onStart, onStop, isLoading, onBatchAnalyze, onAc
 
   const batches = useMemo(() => {
     const b: EmailBatch[] = [];
+    // Division dynamique par groupes de 15
     for (let i = 0; i < tranche.emails.length; i += 15) {
       b.push({ id: b.length + 1, emails: tranche.emails.slice(i, i + 15) });
     }
@@ -358,40 +383,44 @@ function MissionCard({ tranche, onStart, onStop, isLoading, onBatchAnalyze, onAc
   }, [tranche.emails]);
 
   return (
-    <div className={`transition-all duration-500 rounded-[40px] overflow-hidden border ${
-      isOpen ? 'bg-white/[0.04] border-white/10 shadow-2xl' : 'bg-white/[0.01] border-white/5 hover:bg-white/[0.02]'
+    <div className={`transition-all duration-700 rounded-[48px] overflow-hidden border ${
+      isOpen ? 'bg-white/[0.05] border-white/20 shadow-3xl' : 'bg-white/[0.01] border-white/5 hover:bg-white/[0.03]'
     }`}>
-      <div className="flex items-center justify-between p-8 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
-        <div className="flex items-center gap-6">
-          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${
-            tranche.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400' : 
-            tranche.status === 'running' ? 'bg-indigo-500/10 text-indigo-400 animate-pulse' : 'bg-white/5 text-white/30'
+      <div className="flex items-center justify-between p-10 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
+        <div className="flex items-center gap-8">
+          <div className={`w-16 h-16 rounded-[24px] flex items-center justify-center transition-all shadow-2xl ${
+            tranche.status === 'completed' ? 'bg-emerald-500 text-black' : 
+            tranche.status === 'running' ? 'bg-indigo-600 text-white animate-pulse' : 'bg-white/5 text-white/20'
           }`}>
-             {tranche.status === 'completed' ? <Check className="w-6 h-6" /> : <Database className="w-6 h-6" />}
+             {tranche.status === 'completed' ? <Check className="w-8 h-8" strokeWidth={3} /> : <Database className="w-8 h-8" />}
           </div>
           <div>
-            <h3 className="text-xl font-black text-white/90 leading-none">Tranche {tranche.id}</h3>
-            <div className="flex items-center gap-3 mt-3">
-               <div className="w-24 h-1 bg-white/5 rounded-full overflow-hidden">
-                  <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${prog}%` }} />
+            <div className="flex items-center gap-4">
+               <h3 className="text-2xl font-black text-white tracking-tighter">Tranche {tranche.id}</h3>
+               {tranche.status === 'completed' && <span className="bg-emerald-500/10 text-emerald-400 text-[10px] font-black px-3 py-1 rounded-full uppercase border border-emerald-500/20">Récolté</span>}
+            </div>
+            <div className="flex items-center gap-4 mt-4">
+               <div className="w-32 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                  <div className={`h-full transition-all duration-1000 ${tranche.status === 'completed' ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${prog}%` }} />
                </div>
-               <span className="text-[10px] font-black text-white/20 uppercase tracking-widest">{tranche.fetchedCount} emails</span>
+               <span className="text-[11px] font-black text-white/30 uppercase tracking-[0.2em]">{tranche.fetchedCount} / {tranche.totalToFetch}</span>
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-5">
            {tranche.status !== 'completed' && (
               <button onClick={(e) => { e.stopPropagation(); tranche.status === 'running' ? onStop() : onStart(); }}
                 disabled={isLoading && tranche.status !== 'running'}
-                className={`p-4 rounded-2xl transition-all ${tranche.status === 'running' ? 'bg-red-500 text-white' : 'bg-white text-black'}`}>
-                {tranche.status === 'running' ? <StopCircle className="w-5 h-5" /> : <Play className="w-5 h-5" />}
+                className={`p-5 rounded-[20px] transition-all active:scale-90 ${tranche.status === 'running' ? 'bg-red-500 text-white shadow-xl shadow-red-500/20' : 'bg-white text-black hover:bg-white/90'}`}>
+                {tranche.status === 'running' ? <StopCircle className="w-7 h-7" /> : <PlayCircle className="w-7 h-7" />}
               </button>
            )}
         </div>
       </div>
       
       {isOpen && batches.length > 0 && (
-        <div className="px-8 pb-10 space-y-4 animate-in slide-in-from-top-2 duration-500">
+        <div className="px-10 pb-12 space-y-6 animate-in slide-in-from-top-4 duration-700">
+           <div className="h-px bg-white/10 mb-8"></div>
            {batches.map((batch, idx) => (
              <BatchAccordion 
                 key={idx} batch={batch} isLoading={isLoading}
