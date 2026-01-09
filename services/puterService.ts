@@ -6,8 +6,8 @@ export const analyzeEmailsWithPuter = async (
   emails: EmailMessage[]
 ): Promise<Record<string, AIAnalysis>> => {
   if (!window.puter) {
-    logger.error('Puter.js non détecté.');
-    throw new Error('Puter.js n\'est pas chargé.');
+    logger.error('Puter.js manquant.');
+    throw new Error('Puter.js non chargé.');
   }
 
   const emailData = emails.map((e) => ({
@@ -18,37 +18,27 @@ export const analyzeEmailsWithPuter = async (
   }));
 
   const prompt = `
-    Tu es un assistant expert en organisation d'emails.
-    Analyse la liste d'emails suivante (format JSON).
-    Pour chaque email, retourne une analyse structurée.
-    
-    Tu DOIS répondre UNIQUEMENT avec un objet JSON valide où la clé est l'ID de l'email.
-    Structure:
+    Analyse ces emails Gmail et retourne UNIQUEMENT un objet JSON (clé = ID email).
+    Format pour chaque email:
     {
       "category": "Travail" | "Personnel" | "Finance" | "Promotions" | "Social" | "Urgent" | "Autre",
       "tags": ["tag1", "tag2"],
       "suggestedFolder": "Nom du dossier",
-      "summary": "Court résumé",
+      "summary": "Résumé en 5 mots",
       "sentiment": "Positif" | "Neutre" | "Négatif"
     }
-
-    Emails:
-    ${JSON.stringify(emailData)}
+    Données: ${JSON.stringify(emailData)}
   `;
 
   try {
-    const response = await window.puter.ai.chat(prompt, {
-      model: AI_MODEL,
-    });
-
-    let cleanText = response.text.trim();
-    if (cleanText.includes('```')) {
-      cleanText = cleanText.replace(/```json|```/g, '').trim();
+    const response = await window.puter.ai.chat(prompt, { model: AI_MODEL });
+    let text = response.text.trim();
+    if (text.includes('```')) {
+      text = text.replace(/```json|```/g, '').trim();
     }
-
-    return JSON.parse(cleanText);
+    return JSON.parse(text);
   } catch (error) {
-    logger.error("Erreur IA Puter", error);
+    logger.error("IA Error", error);
     throw error;
   }
 };

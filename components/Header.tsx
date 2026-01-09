@@ -11,28 +11,19 @@ const Header: React.FC<HeaderProps> = ({ userEmail, onLogout }) => {
     <header className="bg-slate-800 border-b border-slate-700 p-4 sticky top-0 z-50">
       <div className="max-w-7xl mx-auto flex justify-between items-center">
         <div className="flex items-center gap-3">
-          <div className="bg-indigo-500 p-2 rounded-lg">
+          <div className="bg-indigo-500 p-2 rounded-lg shadow-lg shadow-indigo-500/20">
             <Bot className="text-white w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold text-white tracking-tight">
-              Gmail AI Organizer
-            </h1>
-            <p className="text-xs text-slate-400">Propulsé par Puter.js & Gemini 3</p>
+            <h1 className="text-xl font-bold text-white tracking-tight leading-tight">Gmail AI</h1>
+            <p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Puter.js & Gemini 3</p>
           </div>
         </div>
-
         {userEmail && (
           <div className="flex items-center gap-4">
-            <span className="text-sm text-slate-300 hidden sm:block">
-              {userEmail}
-            </span>
-            <button
-              onClick={onLogout}
-              className="flex items-center gap-2 px-3 py-1.5 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-md text-sm transition-colors"
-            >
-              <LogOut className="w-4 h-4" />
-              <span className="hidden sm:inline">Déconnexion</span>
+            <span className="text-xs font-medium text-slate-400 hidden sm:block bg-slate-900 px-3 py-1.5 rounded-full border border-slate-700">{userEmail}</span>
+            <button onClick={onLogout} className="p-2 bg-slate-700 hover:bg-red-500/20 hover:text-red-400 text-slate-300 rounded-xl transition-all" title="Déconnexion">
+              <LogOut className="w-5 h-5" />
             </button>
           </div>
         )}

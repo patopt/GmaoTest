@@ -6,7 +6,7 @@ import LogConsole from './components/LogConsole';
 import { GMAIL_DISCOVERY_DOCS, GMAIL_SCOPES } from './constants';
 import { EmailMessage, EnrichedEmail } from './types';
 import { analyzeEmailsWithPuter } from './services/puterService';
-import { Loader2, RefreshCw, AlertTriangle, Inbox, CheckCircle2 } from 'lucide-react';
+import { Loader2, RefreshCw, AlertTriangle, Inbox, CheckCircle2, ExternalLink } from 'lucide-react';
 import { logger } from './utils/logger';
 
 export default function App() {
@@ -19,20 +19,19 @@ export default function App() {
   const [emails, setEmails] = useState<EnrichedEmail[]>([]);
   const [loading, setLoading] = useState(false);
   const [statusText, setStatusText] = useState('');
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{ message: string; link?: string } | null>(null);
 
   useEffect(() => {
     const storedId = localStorage.getItem('google_client_id');
     if (storedId) {
       setClientId(storedId);
-      logger.info("Client ID récupéré depuis le cache navigateur.");
+      logger.info("Client ID récupéré du cache.");
     }
   }, []);
 
   const handleClientIdSave = (id: string) => {
     localStorage.setItem('google_client_id', id);
     setClientId(id);
-    logger.success("Configuration mise à jour. Redémarrage des services...");
     window.location.reload(); 
   };
 
@@ -45,7 +44,6 @@ export default function App() {
         setEmails([]);
         localStorage.removeItem('google_client_id');
         setClientId(null);
-        logger.warn("Session fermée par l'utilisateur.");
       });
     }
   };
@@ -53,72 +51,66 @@ export default function App() {
   useEffect(() => {
     if (!clientId) return;
 
-    logger.info("Chargement des SDKs Google (GAPI + GIS)...");
-
     const loadScripts = async () => {
-      // On s'assure que les scripts sont présents dans le DOM
-      if (!window.gapi || !window.google) {
-        logger.warn("En attente du chargement des scripts Google...");
-        return;
-      }
+      if (!window.gapi || !window.google) return;
 
-      // Initialisation GAPI
       window.gapi.load('client', async () => {
         try {
           await window.gapi.client.init({
             discoveryDocs: GMAIL_DISCOVERY_DOCS,
           });
           setIsGapiLoaded(true);
-          logger.success("GAPI Client Gmail initialisé.");
         } catch (e) {
-          logger.error("Erreur fatale GAPI Init", e);
-          setError("Impossible de charger les APIs Gmail.");
+          logger.error("GAPI Init Fail", e);
+          setError({ message: "Erreur d'initialisation Google SDK." });
         }
       });
 
-      // Initialisation GIS
       try {
         const client = window.google.accounts.oauth2.initTokenClient({
           client_id: clientId,
           scope: GMAIL_SCOPES,
           callback: async (resp: any) => {
             if (resp.error) {
-              logger.error("Échec de l'authentification OAuth", resp);
-              setError("Erreur Google : " + resp.error);
+              setError({ message: "Erreur d'auth : " + resp.error });
               return;
             }
-            logger.success("Authentification réussie. Accès Gmail autorisé.");
             try {
               const userInfo = await window.gapi.client.gmail.users.getProfile({ userId: 'me' });
               setUserEmail(userInfo.result.emailAddress);
-              logger.info("Utilisateur identifié : " + userInfo.result.emailAddress);
               fetchEmails();
-            } catch (err) {
-              logger.error("Erreur de récupération du profil", err);
+            } catch (err: any) {
+              logger.error("Erreur Profil Gmail", err);
+              // Détection du service désactivé (Erreur 403 SERVICE_DISABLED)
+              if (err.result?.error?.status === "PERMISSION_DENIED" || err.result?.error?.message?.includes("disabled")) {
+                setError({ 
+                  message: "La Gmail API n'est pas activée sur votre projet Google Cloud.",
+                  link: `https://console.developers.google.com/apis/api/gmail.googleapis.com/overview?project=${clientId.split('-')[0]}`
+                });
+              } else {
+                setError({ message: "Échec de lecture Gmail. Vérifiez vos permissions." });
+              }
             }
           },
         });
         setTokenClient(client);
         setIsGisLoaded(true);
-        logger.info("GIS (Google Identity) prêt.");
       } catch (e) {
-        logger.error("Erreur initTokenClient.", e);
+        logger.error("GIS Init Fail", e);
       }
     };
 
-    const timer = setTimeout(loadScripts, 1000); // Petit délai pour laisser les scripts async se charger
+    const timer = setTimeout(loadScripts, 1000);
     return () => clearTimeout(timer);
   }, [clientId]);
 
   const handleAuthClick = () => {
-    if (tokenClient) {
-      tokenClient.requestAccessToken({ prompt: 'select_account' });
-    }
+    if (tokenClient) tokenClient.requestAccessToken({ prompt: 'select_account' });
   };
 
   const fetchEmails = useCallback(async () => {
     setLoading(true);
-    setStatusText('Recherche des emails...');
+    setStatusText('Analyse en cours...');
     setError(null);
 
     try {
@@ -130,12 +122,10 @@ export default function App() {
 
       const messages = response.result.messages;
       if (!messages || messages.length === 0) {
-        setStatusText('Boîte de réception vide.');
         setLoading(false);
         return;
       }
 
-      setStatusText(`Téléchargement de ${messages.length} messages...`);
       const detailPromises = messages.map((msg: any) => 
         window.gapi.client.gmail.users.messages.get({ userId: 'me', id: msg.id, format: 'full' })
       );
@@ -154,19 +144,15 @@ export default function App() {
         };
       });
 
-      setStatusText("Gemini analyse vos messages...");
       const analysisResults = await analyzeEmailsWithPuter(detailedEmails);
 
-      const finalData: EnrichedEmail[] = detailedEmails.map(email => ({
+      setEmails(detailedEmails.map(email => ({
         ...email,
         analysis: analysisResults[email.id]
-      }));
-
-      setEmails(finalData);
-      setStatusText('');
+      })));
     } catch (err: any) {
-      logger.error("Erreur lors de la récupération/analyse", err);
-      setError("Le service Gmail ou IA est inaccessible. Vérifiez les logs.");
+      logger.error("Erreur Fetch/IA", err);
+      setError({ message: "Erreur lors de l'analyse des emails." });
     } finally {
       setLoading(false);
     }
@@ -183,7 +169,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-900 text-slate-100 selection:bg-indigo-500/30">
+    <div className="min-h-screen flex flex-col bg-slate-900 text-slate-100">
       <Header userEmail={userEmail} onLogout={handleLogout} />
       <main className="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-8 lg:p-12 mb-20">
         {!userEmail ? (
@@ -194,10 +180,8 @@ export default function App() {
                   <Inbox className="w-12 h-12 text-indigo-400" />
                 </div>
               </div>
-              <h2 className="text-3xl font-extrabold text-white mb-3">Accès Gmail</h2>
-              <p className="text-slate-400 mb-10 leading-relaxed">
-                Autorisez l'application à lire vos emails pour bénéficier de l'organisation intelligente.
-              </p>
+              <h2 className="text-3xl font-extrabold text-white mb-3">Boîte de réception IA</h2>
+              <p className="text-slate-400 mb-10 leading-relaxed">Connectez votre Gmail pour que Gemini organise vos messages automatiquement.</p>
               
               {!isGapiLoaded || !isGisLoaded ? (
                 <div className="flex items-center justify-center gap-3 text-indigo-400 font-medium">
@@ -207,52 +191,60 @@ export default function App() {
               ) : (
                 <button
                   onClick={handleAuthClick}
-                  className="w-full bg-white text-slate-900 hover:bg-slate-100 font-bold py-4 px-6 rounded-2xl shadow-xl transition-all flex items-center justify-center gap-3 active:scale-[0.97]"
+                  className="w-full bg-white text-slate-900 hover:bg-slate-100 font-bold py-4 px-6 rounded-2xl shadow-xl transition-all flex items-center justify-center gap-3 active:scale-95"
                 >
                   <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-6 h-6" alt="G" />
-                  Continuer avec Google
+                  Se connecter à Gmail
                 </button>
               )}
             </div>
+
             {error && (
-              <div className="max-w-lg w-full bg-red-950/40 border border-red-500/30 text-red-300 p-5 rounded-2xl flex gap-3 text-left">
-                <AlertTriangle className="w-5 h-5 shrink-0" />
-                <div className="text-sm">
-                  <p className="font-bold">Problème d'accès :</p>
-                  <p>{error}</p>
+              <div className="max-w-lg w-full bg-red-950/40 border border-red-500/30 text-red-300 p-6 rounded-2xl flex flex-col gap-4 text-left">
+                <div className="flex gap-3">
+                  <AlertTriangle className="w-5 h-5 shrink-0 text-red-500" />
+                  <p className="text-sm font-semibold">{error.message}</p>
                 </div>
+                {error.link && (
+                  <div className="space-y-3">
+                    <p className="text-xs text-red-200 opacity-80">L'accès à vos emails est bloqué car la Gmail API est éteinte dans votre projet Google Cloud.</p>
+                    <a 
+                      href={error.link} 
+                      target="_blank" 
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 bg-red-600 hover:bg-red-500 text-white text-xs font-bold py-3 px-5 rounded-xl transition-all shadow-lg"
+                    >
+                      Activer la Gmail API maintenant <ExternalLink className="w-4 h-4" />
+                    </a>
+                  </div>
+                )}
               </div>
             )}
           </div>
         ) : (
-          <div className="space-y-8">
+          <div className="space-y-8 animate-in fade-in slide-in-from-bottom-5 duration-700">
             <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-slate-800/40 p-6 rounded-3xl border border-slate-700">
                 <div>
                     <h2 className="text-2xl font-black text-white tracking-tight">Intelligence Inbox</h2>
-                    <p className="text-sm text-slate-400 mt-1">
-                      {emails.length > 0 ? `${emails.length} emails analysés` : "Boîte prête"}
-                    </p>
+                    <p className="text-sm text-slate-400 mt-1">{emails.length} emails analysés avec succès.</p>
                 </div>
                 <button
                     onClick={fetchEmails}
                     disabled={loading}
-                    className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 disabled:bg-slate-700 text-white px-8 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-600/20"
+                    className="w-full sm:w-auto bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-2xl font-bold flex items-center justify-center gap-2 transition-all shadow-lg shadow-indigo-600/20"
                 >
                     {loading ? <Loader2 className="animate-spin w-5 h-5" /> : <RefreshCw className="w-5 h-5" />}
                     {loading ? 'Analyse...' : 'Relancer l\'analyse'}
                 </button>
             </div>
-
             {loading ? (
-              <div className="flex flex-col items-center justify-center py-24 space-y-4">
+              <div className="flex flex-col items-center justify-center py-32 space-y-4">
                 <Loader2 className="w-12 h-12 text-indigo-500 animate-spin" />
-                <p className="text-lg text-indigo-300">{statusText}</p>
+                <p className="text-xl font-medium text-indigo-300 animate-pulse">{statusText}</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-                {emails.map((email) => (
-                  <EmailCard key={email.id} email={email} />
-                ))}
+                {emails.map((email) => <EmailCard key={email.id} email={email} />)}
               </div>
             )}
           </div>
