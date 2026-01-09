@@ -15,6 +15,7 @@ export interface AIAnalysis {
   suggestedFolder: string;
   summary: string;
   sentiment: 'Positif' | 'Neutre' | 'Négatif';
+  action?: 'archive' | 'keep' | 'delete';
 }
 
 export interface EnrichedEmail extends EmailMessage {
@@ -24,7 +25,7 @@ export interface EnrichedEmail extends EmailMessage {
   failed?: boolean;
 }
 
-export type TaskStatus = 'pending' | 'running' | 'stopped' | 'completed' | 'error';
+export type TaskStatus = 'pending' | 'running' | 'stopped' | 'completed' | 'error' | 'cooldown';
 
 export interface HarvestTranche {
   id: number;
@@ -41,12 +42,13 @@ export interface EmailBatch {
   emails: EnrichedEmail[];
 }
 
-export type ViewMode = 'pipeline' | 'mail' | 'training';
+export type ViewMode = 'pipeline' | 'mail' | 'training' | 'bilan';
 export type FolderStyle = 'standard' | 'numbered';
 
 export interface TrainingStep {
   email: EnrichedEmail;
   completed: boolean;
+  userChoice?: string;
 }
 
 declare global {
