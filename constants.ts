@@ -15,9 +15,8 @@ export const DEFAULT_AI_MODEL = 'gemini-3-flash-preview';
 export const AI_MODEL = DEFAULT_AI_MODEL;
 export const DEFAULT_PROVIDER = 'puter';
 export const GMAIL_DISCOVERY_DOCS = ['https://www.googleapis.com/discovery/v1/apis/gmail/v1/rest'];
-export const GMAIL_SCOPES = 'https://www.googleapis.com/auth/gmail.modify';
+export const GMAIL_SCOPES = 'https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.labels';
 export const BATCH_SIZE = 15;
-export const MAX_HARVEST_LIMIT = 5000; 
+export const MAX_HARVEST_LIMIT = 10000; 
 
-// Fixed Client ID as requested
 export const GOOGLE_CLIENT_ID = "392552451464-hf5mvvcs0tpdohr129u0glhb2m2p8q7v.apps.googleusercontent.com";

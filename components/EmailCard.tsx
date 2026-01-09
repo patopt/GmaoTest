@@ -1,5 +1,6 @@
+
 import React from 'react';
-import { Tag, FolderOpen, Send, User, ChevronRight, Hash } from 'lucide-react';
+import { Tag, FolderOpen, Send, User, ChevronRight, Hash, ShieldCheck, MoreHorizontal } from 'lucide-react';
 import { EnrichedEmail } from '../types';
 
 interface EmailCardProps {
@@ -11,76 +12,79 @@ const EmailCard: React.FC<EmailCardProps> = ({ email, onAction }) => {
   const analysis = email.analysis;
 
   return (
-    <div className={`group relative bg-white/5 backdrop-blur-xl border rounded-[28px] p-5 transition-all duration-500 hover:bg-white/10 hover:shadow-2xl hover:-translate-y-1 ${
+    <div className={`group relative bg-white/[0.04] backdrop-blur-2xl border rounded-[38px] p-6 transition-all duration-700 hover:bg-white/[0.08] hover:shadow-[0_25px_50px_-12px_rgba(0,0,0,0.5)] ${
       analysis ? 'border-white/10' : 'border-white/5 opacity-50'
     }`}>
-      {/* Sender & Badge */}
-      <div className="flex justify-between items-start mb-4">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center text-white shrink-0 shadow-lg">
-            <User className="w-5 h-5" />
+      {/* Sender Header */}
+      <div className="flex justify-between items-start mb-5">
+        <div className="flex items-center gap-4 min-w-0">
+          <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shrink-0 shadow-lg group-hover:scale-110 transition-transform duration-500">
+            <User className="w-6 h-6" />
           </div>
           <div className="min-w-0">
-            <p className="text-[11px] font-bold text-indigo-400 uppercase tracking-widest truncate">
-              {email.from?.split('<')[0].trim() || 'Expéditeur inconnu'}
+            <p className="text-[11px] font-black text-indigo-400 uppercase tracking-[0.2em] truncate mb-1">
+              {email.from?.split('<')[0].trim()}
             </p>
-            <h3 className="text-[15px] font-black text-white/90 truncate leading-tight">
-              {email.subject || '(Sans objet)'}
+            <h3 className="text-lg font-black text-white/90 truncate leading-tight tracking-tight">
+              {email.subject}
             </h3>
           </div>
         </div>
-        {analysis && (
-          <div className="bg-white/10 px-2.5 py-1 rounded-full border border-white/5 text-[10px] font-black text-white/60 uppercase tracking-tighter">
-            {analysis.category}
-          </div>
-        )}
+        <button className="p-2 bg-white/5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">
+          <MoreHorizontal className="w-4 h-4 text-white/40" />
+        </button>
       </div>
 
-      {/* Content Preview */}
-      <div className="mb-6">
-        <p className="text-white/40 text-[13px] leading-relaxed line-clamp-2 italic font-medium">
+      {/* Excerpt */}
+      <div className="mb-8">
+        <p className="text-white/40 text-sm leading-relaxed line-clamp-2 font-medium">
           {email.snippet}
         </p>
       </div>
 
-      {/* AI Intelligence / Actions */}
+      {/* Intelligence Section */}
       {analysis ? (
-        <div className="space-y-4 pt-4 border-t border-white/5">
-          <div className="bg-indigo-500/5 rounded-2xl p-4 border border-indigo-500/10">
-             <div className="flex items-start gap-2 mb-3">
-               <Send className="w-3 h-3 text-indigo-400 mt-0.5" />
-               <p className="text-[12px] text-indigo-200/80 font-semibold leading-snug">
+        <div className="space-y-5 pt-5 border-t border-white/5">
+          <div className="bg-indigo-500/5 rounded-3xl p-5 border border-indigo-500/10">
+             <div className="flex items-start gap-3 mb-4">
+               <div className="mt-1"><ShieldCheck className="w-4 h-4 text-indigo-400" /></div>
+               <p className="text-[13px] text-indigo-100/80 font-semibold leading-relaxed">
                  {analysis.summary}
                </p>
              </div>
-             <div className="flex flex-wrap gap-1.5">
-               {analysis.tags.map((tag, idx) => (
-                 <span key={idx} className="bg-white/5 text-[10px] text-white/40 px-2 py-0.5 rounded-lg border border-white/5 flex items-center gap-1">
-                   <Hash className="w-2.5 h-2.5" /> {tag}
+             <div className="flex flex-wrap gap-2">
+               {analysis.tags.slice(0, 3).map((tag, idx) => (
+                 <span key={idx} className="bg-white/5 text-[10px] text-white/50 px-3 py-1 rounded-full border border-white/5 font-black uppercase tracking-tighter">
+                   #{tag}
                  </span>
                ))}
+               <span className="bg-indigo-400/10 text-[10px] text-indigo-400 px-3 py-1 rounded-full border border-indigo-400/20 font-black uppercase tracking-tighter">
+                 {analysis.category}
+               </span>
              </div>
           </div>
 
-          <div className="flex gap-2">
+          <div className="flex gap-3">
             <button 
               onClick={() => onAction(analysis.suggestedFolder)}
-              className="flex-1 py-3.5 bg-white text-slate-900 rounded-[20px] text-[13px] font-black transition-all hover:bg-indigo-50 flex items-center justify-center gap-2 active:scale-95 shadow-lg shadow-white/5"
+              className="flex-1 py-4 bg-white text-black rounded-2xl text-sm font-black transition-all hover:bg-white/90 flex items-center justify-center gap-2 active:scale-95 shadow-xl"
             >
               <FolderOpen className="w-4 h-4" />
-              Ranger dans {analysis.suggestedFolder}
+              Classer
             </button>
-            <button className="p-3.5 bg-white/5 hover:bg-white/10 text-white/60 rounded-[20px] transition-all active:scale-95">
-              <Tag className="w-4 h-4" />
+            <button className="p-4 bg-white/5 hover:bg-white/10 text-white/60 rounded-2xl transition-all active:scale-95 border border-white/5">
+              <Tag className="w-5 h-5" />
             </button>
           </div>
         </div>
       ) : (
-        <div className="h-24 flex items-center justify-center border-t border-white/5">
-          <div className="animate-pulse flex items-center gap-2">
-            <div className="w-1.5 h-1.5 rounded-full bg-white/20"></div>
-            <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">En attente d'IA</span>
-          </div>
+        <div className="h-32 flex flex-col items-center justify-center border-t border-white/5">
+           <div className="flex gap-1.5 mb-2">
+              <div className="w-2 h-2 rounded-full bg-indigo-500/20 animate-bounce [animation-delay:-0.3s]"></div>
+              <div className="w-2 h-2 rounded-full bg-indigo-500/20 animate-bounce [animation-delay:-0.15s]"></div>
+              <div className="w-2 h-2 rounded-full bg-indigo-500/20 animate-bounce"></div>
+           </div>
+           <span className="text-[10px] font-black text-white/20 uppercase tracking-[0.3em]">IA Processing</span>
         </div>
       )}
     </div>
