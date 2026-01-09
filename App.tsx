@@ -6,9 +6,9 @@ import LogConsole from './components/LogConsole';
 import BatchAccordion from './components/BatchAccordion';
 import { GMAIL_DISCOVERY_DOCS, GMAIL_SCOPES, GOOGLE_CLIENT_ID, DEFAULT_AI_MODEL } from './constants';
 import { EnrichedEmail, HarvestTranche, AIAnalysis, EmailBatch } from './types';
-import { getTotalInboxCount, createGmailLabel, moveEmailsToLabel } from './services/gmailService';
+import { getTotalInboxCount, createGmailLabel, moveEmailsToLabel, applyTagsToEmail } from './services/gmailService';
 import { analyzeWithPuter, analyzeWithGeminiSDK } from './services/aiService';
-import { Loader2, Inbox, Database, Settings, StopCircle, PlayCircle, Clock, ShieldAlert, CheckCircle2, Zap, Rocket, FolderPlus, Tag, Play } from 'lucide-react';
+import { Loader2, Inbox, Database, Settings, StopCircle, PlayCircle, Clock, ShieldAlert, CheckCircle2, Zap, Rocket, FolderPlus, Tag, Play, Check } from 'lucide-react';
 import { logger } from './utils/logger';
 
 export default function App() {
@@ -32,7 +32,6 @@ export default function App() {
 
   const stopSignal = useRef<boolean>(false);
 
-  // Persistence
   useEffect(() => {
     localStorage.setItem('harvest_tranches_v8', JSON.stringify(tranches));
     localStorage.setItem('total_inbox_count', String(totalInboxCount));
@@ -115,7 +114,7 @@ export default function App() {
         
         const response: any = await window.gapi.client.gmail.users.messages.list({ 
           userId: 'me', 
-          maxResults: Math.min(50, tranche.totalToFetch - fetched),
+          maxResults: 50,
           pageToken: pageToken,
           labelIds: ['INBOX'] 
         });
@@ -123,9 +122,9 @@ export default function App() {
         const messages = response.result.messages || [];
         pageToken = response.result.nextPageToken || null;
 
-        // Optimisation : Récupération parallèle par lots de 5 pour éviter le rate-limiting tout en étant rapide
         const detailed: EnrichedEmail[] = [];
-        const CONCURRENCY = 5;
+        // Optimisation MAX: Parallélisme 10 pour une vitesse éclair
+        const CONCURRENCY = 10;
         for (let i = 0; i < messages.length; i += CONCURRENCY) {
           if (stopSignal.current) break;
           const chunk = messages.slice(i, i + CONCURRENCY);
@@ -144,8 +143,7 @@ export default function App() {
             } as EnrichedEmail;
           }));
           detailed.push(...chunkDetails);
-          // Petit délai de sécurité entre les lots parallèles
-          await new Promise(r => setTimeout(r, 100));
+          await new Promise(r => setTimeout(r, 50)); // Throttling minimal
         }
 
         currentEmails = [...currentEmails, ...detailed];
@@ -158,23 +156,14 @@ export default function App() {
         });
 
         if (!pageToken || fetched >= tranche.totalToFetch) break;
-        // Délai plus court entre les pages list
-        await new Promise(r => setTimeout(r, 800));
       }
 
       if (stopSignal.current) {
         updateTranche(trancheId, { status: 'stopped' });
       } else {
         updateTranche(trancheId, { status: 'cooldown' });
-        logger.success(`Bloc ${trancheId} récolté ! Pause de sécurité...`);
-        let cd = 30;
-        const itv = setInterval(() => {
-          cd--;
-          if (cd <= 0) {
-            clearInterval(itv);
-            updateTranche(trancheId, { status: 'completed' });
-          }
-        }, 1000);
+        logger.success(`Bloc ${trancheId} terminé !`);
+        setTimeout(() => updateTranche(trancheId, { status: 'completed' }), 1000);
       }
     } catch (err: any) {
       logger.error("Mission échouée", err);
@@ -188,7 +177,7 @@ export default function App() {
   const handleBatchAnalyze = async (trancheId: number, batchIndex: number, emailsToAnalyze: EnrichedEmail[]) => {
     if (loading) return;
     setLoading(true);
-    setStatusText(`Analyse IA du groupe ${batchIndex + 1}...`);
+    setStatusText(`Intelligence IA : Analyse mail par mail (${emailsToAnalyze.length})...`);
     try {
       const results = config.provider === 'puter' 
         ? await analyzeWithPuter(emailsToAnalyze, config.model)
@@ -197,125 +186,62 @@ export default function App() {
       const tranche = tranches.find(t => t.id === trancheId);
       if (tranche) {
         const updatedEmails = tranche.emails.map(e => {
-          if (results[e.id]) {
-            return { ...e, analysis: results[e.id], processed: true };
-          }
+          if (results[e.id]) return { ...e, analysis: results[e.id], processed: true };
           return e;
         });
         updateTranche(trancheId, { emails: updatedEmails });
-        logger.success(`Groupe ${batchIndex + 1} analysé avec succès.`);
+        logger.success(`Batch ${batchIndex + 1} : ${Object.keys(results).length} emails analysés.`);
       }
     } catch (e) {
-      logger.error("Erreur d'analyse de groupe", e);
+      logger.error("Erreur IA", e);
     } finally {
       setLoading(false);
       setStatusText('');
     }
   };
 
-  const handleAction = async (trancheId: number, emailId: string, folder: string) => {
-    try {
-      setStatusText(`Déplacement vers ${folder}...`);
-      const success = await moveEmailsToLabel([emailId], folder);
-      if (success) {
-        const tranche = tranches.find(t => t.id === trancheId);
-        if (tranche) {
-          const updatedEmails = tranche.emails.map(e => e.id === emailId ? { ...e, organized: true } : e);
-          updateTranche(trancheId, { emails: updatedEmails });
-          logger.success(`Email déplacé vers ${folder}`);
-        }
-      }
-    } catch (e) {
-      logger.error("Erreur déplacement", e);
-    } finally {
-      setStatusText('');
-    }
-  };
-
-  const runAutoPilot = async () => {
-    if (isAutoPilotActive) return setIsAutoPilotActive(false);
-    setIsAutoPilotActive(true);
-    logger.info("Mode Auto-Pilote activé. Lancement de l'analyse et l'organisation...");
-
-    for (const tranche of tranches) {
-      const pending = tranche.emails.filter(e => !e.organized);
-      if (pending.length === 0) continue;
-
-      const chunks = [];
-      for (let i = 0; i < pending.length; i += 10) {
-        chunks.push(pending.slice(i, i + 10));
-      }
-
-      for (const chunk of chunks) {
-        if (!isAutoPilotActive) break;
-        try {
-          setStatusText(`Analyse IA (${chunk.length} emails)...`);
-          const results = config.provider === 'puter' 
-            ? await analyzeWithPuter(chunk, config.model)
-            : await analyzeWithGeminiSDK(chunk, config.model);
-
-          const folderGroups: Record<string, string[]> = {};
-          chunk.forEach(e => {
-            const analysis = results[e.id];
-            if (analysis) {
-              const folder = analysis.suggestedFolder;
-              if (!folderGroups[folder]) folderGroups[folder] = [];
-              folderGroups[folder].push(e.id);
-            }
-          });
-
-          for (const [folder, ids] of Object.entries(folderGroups)) {
-             setStatusText(`Déplacement vers ${folder}...`);
-             await moveEmailsToLabel(ids, folder);
-             logger.info(`${ids.length} emails déplacés vers [${folder}]`);
-          }
-
-          const updatedEmails = tranche.emails.map(e => {
-            if (results[e.id]) return { ...e, analysis: results[e.id], processed: true, organized: true };
-            return e;
-          });
-          updateTranche(tranche.id, { emails: updatedEmails });
-          
-          await new Promise(r => setTimeout(r, 1000));
-        } catch (e) {
-          logger.error("Erreur Auto-Pilote", e);
+  const applyAllTags = async () => {
+    setLoading(true);
+    let count = 0;
+    for (const t of tranches) {
+      for (const e of t.emails) {
+        if (e.analysis?.tags && e.analysis.tags.length > 0 && !e.organized) {
+          setStatusText(`Tagging : ${e.subject?.slice(0, 20)}...`);
+          await applyTagsToEmail(e.id, e.analysis.tags);
+          count++;
+          await new Promise(r => setTimeout(r, 100));
         }
       }
     }
-    setIsAutoPilotActive(false);
+    setLoading(false);
+    setStatusText('');
+    logger.success(`${count} emails taggués avec succès.`);
   };
 
-  const createAllFolders = async () => {
+  const createFolders = async () => {
     const folders = new Set<string>();
     tranches.forEach(t => t.emails.forEach(e => {
       if (e.analysis?.suggestedFolder) folders.add(e.analysis.suggestedFolder);
     }));
 
-    if (folders.size === 0) return logger.warn("Aucun dossier suggéré trouvé. Lancez une analyse d'abord.");
+    if (folders.size === 0) return logger.warn("Aucune suggestion de dossier à créer.");
     
     setLoading(true);
     setStatusText("Création de la structure Gmail...");
     for (const f of Array.from(folders)) {
       await createGmailLabel(f);
-      await new Promise(r => setTimeout(r, 500));
+      await new Promise(r => setTimeout(r, 300));
     }
     setLoading(false);
     setStatusText("");
-    logger.success("Structure Gmail prête !");
+    logger.success(`${folders.size} dossiers créés.`);
   };
 
   const globalFetched = useMemo(() => tranches.reduce((acc, t) => acc + t.fetchedCount, 0), [tranches]);
   const progressPercent = totalInboxCount > 0 ? Math.round((globalFetched / totalInboxCount) * 100) : 0;
 
-  const handleReset = () => {
-    localStorage.clear();
-    window.location.reload();
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('google_access_token');
-    window.location.reload();
-  };
+  const handleReset = () => { localStorage.clear(); window.location.reload(); };
+  const handleLogout = () => { localStorage.removeItem('google_access_token'); window.location.reload(); };
 
   if (showSetup) return (
     <div className="bg-black min-h-screen text-white">
@@ -350,7 +276,7 @@ export default function App() {
                   disabled={!isClientReady}
                   className="w-full py-6 bg-white text-black font-black rounded-3xl flex items-center justify-center gap-4 hover:bg-white/90 transition-all active:scale-95 shadow-2xl"
                 >
-                  {!isClientReady ? <Loader2 className="w-6 h-6 animate-spin" /> : <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-8 h-8" />}
+                  <img src="https://www.svgrepo.com/show/475656/google-color.svg" className="w-8 h-8" />
                   Démarrer
                 </button>
               </div>
@@ -358,79 +284,56 @@ export default function App() {
           </div>
         ) : (
           <div className="animate-in fade-in slide-in-from-bottom-12 duration-1000">
-            {/* Dashboard Actions */}
-            <div className="flex flex-wrap gap-4 mb-10">
+            {/* Action Bar */}
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mb-10">
                <button 
-                  onClick={runAutoPilot}
-                  className={`flex-1 py-5 rounded-[32px] font-black text-sm flex items-center justify-center gap-3 transition-all active:scale-95 border ${
+                  onClick={() => setIsAutoPilotActive(!isAutoPilotActive)}
+                  className={`py-5 rounded-[32px] font-black text-xs flex items-center justify-center gap-3 transition-all active:scale-95 border ${
                     isAutoPilotActive ? 'bg-indigo-600 text-white border-indigo-400' : 'bg-white text-black border-white'
                   }`}
                >
-                 <Rocket className={`w-5 h-5 ${isAutoPilotActive ? 'animate-bounce' : ''}`} />
-                 {isAutoPilotActive ? 'Auto-Pilote : ON' : 'Lancer l\'Auto-Pilote'}
+                 <Rocket className="w-4 h-4" /> Auto-Pilote
                </button>
-               <button 
-                  onClick={createAllFolders}
-                  className="px-8 py-5 bg-white/5 border border-white/10 rounded-[32px] font-black text-xs text-white/60 hover:text-white hover:bg-white/10 transition-all active:scale-95 flex items-center gap-3"
-               >
-                 <FolderPlus className="w-5 h-5" />
-                 Générer Structure Gmail
+               <button onClick={createFolders} className="py-5 bg-white/5 border border-white/10 rounded-[32px] font-black text-[10px] text-white/60 hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2">
+                 <FolderPlus className="w-4 h-4" /> Créer Dossiers
                </button>
-               <button onClick={() => setShowSetup(true)} className="p-5 bg-white/5 border border-white/10 rounded-[32px] hover:bg-white/10 transition-all">
-                  <Settings className="w-6 h-6 text-white/40" />
+               <button onClick={applyAllTags} className="py-5 bg-white/5 border border-white/10 rounded-[32px] font-black text-[10px] text-white/60 hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2">
+                 <Tag className="w-4 h-4" /> Appliquer Tags
+               </button>
+               <button onClick={() => setShowSetup(true)} className="py-5 bg-white/5 border border-white/10 rounded-[32px] flex items-center justify-center hover:bg-white/10 transition-all">
+                  <Settings className="w-5 h-5 text-white/40" />
                </button>
             </div>
 
-            {/* Global Stats */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 mb-12">
-               <div className="bg-white/[0.02] backdrop-blur-2xl p-10 rounded-[48px] border border-white/5 shadow-2xl">
-                  <h3 className="text-xs font-black text-white/30 uppercase tracking-[0.3em] mb-8">Progression de Récolte</h3>
-                  <div className="flex items-end justify-between mb-4">
-                    <span className="text-6xl font-black text-white tracking-tighter">{progressPercent}%</span>
-                    <span className="text-xs font-bold text-white/30 mb-2">{globalFetched.toLocaleString()} / {totalInboxCount.toLocaleString()} emails</span>
-                  </div>
-                  <div className="h-3 bg-white/5 rounded-full overflow-hidden p-0.5">
-                    <div className="h-full bg-gradient-to-r from-indigo-500 via-purple-500 to-emerald-500 rounded-full transition-all duration-1000" style={{ width: `${progressPercent}%` }} />
-                  </div>
+            <div className="bg-white/[0.02] backdrop-blur-2xl p-10 rounded-[48px] border border-white/5 mb-12 shadow-2xl">
+               <div className="flex justify-between items-end mb-4">
+                  <span className="text-6xl font-black text-white tracking-tighter">{progressPercent}%</span>
+                  <span className="text-xs font-bold text-white/30 mb-2 uppercase tracking-widest">{globalFetched.toLocaleString()} récoltés</span>
                </div>
-               
-               <div className="bg-white/[0.02] backdrop-blur-2xl p-10 rounded-[48px] border border-white/5 shadow-2xl flex flex-col justify-between">
-                  <div className="flex items-center gap-4 mb-4">
-                    <ShieldAlert className="w-6 h-6 text-emerald-400" />
-                    <span className="text-xs font-black text-emerald-400 uppercase tracking-widest">Moteur Sécurisé</span>
-                  </div>
-                  <p className="text-sm text-white/40 font-medium leading-relaxed">
-                    Chaque bloc de 1000 est traité séparément. Les pauses automatiques protègent votre compte Gmail contre les limitations API (Error 429).
-                  </p>
+               <div className="h-2 bg-white/5 rounded-full overflow-hidden">
+                  <div className="h-full bg-indigo-500 rounded-full transition-all duration-1000" style={{ width: `${progressPercent}%` }} />
                </div>
             </div>
 
             {loading && (
               <div className="fixed bottom-10 inset-x-0 flex justify-center z-50 pointer-events-none">
                  <div className="bg-white text-black px-8 py-5 rounded-full shadow-2xl flex items-center gap-5 animate-in slide-in-from-bottom-12 pointer-events-auto border border-black/10">
-                    <Loader2 className="w-6 h-6 animate-spin text-indigo-600" />
-                    <span className="font-black text-[10px] tracking-[0.2em] uppercase">{statusText}</span>
-                    <button 
-                      onClick={() => stopSignal.current = true}
-                      className="ml-4 p-2 bg-red-500 text-white rounded-full hover:bg-red-600 transition-all active:scale-95"
-                    >
-                      <StopCircle className="w-6 h-6" />
-                    </button>
+                    <Loader2 className="w-5 h-5 animate-spin text-indigo-600" />
+                    <span className="font-black text-[9px] tracking-[0.2em] uppercase">{statusText}</span>
+                    <button onClick={() => stopSignal.current = true} className="ml-4 p-2 bg-red-500 text-white rounded-full"><StopCircle className="w-5 h-5" /></button>
                  </div>
               </div>
             )}
 
             <div className="space-y-6">
-               <h2 className="text-2xl font-black text-white tracking-tight px-4">Missions de Récolte</h2>
+               <h2 className="text-2xl font-black text-white tracking-tight px-4">Flux de Travail</h2>
                {tranches.map(t => (
                  <MissionCard 
-                    key={t.id} 
-                    tranche={t} 
-                    isLoading={loading}
+                    key={t.id} tranche={t} isLoading={loading}
                     onStart={() => runHarvestMission(t.id)} 
                     onStop={() => stopSignal.current = true}
                     onBatchAnalyze={handleBatchAnalyze}
-                    onAction={handleAction}
+                    onAction={(id: string, f: string) => moveEmailsToLabel([id], f)}
                  />
                ))}
             </div>
@@ -449,63 +352,51 @@ function MissionCard({ tranche, onStart, onStop, isLoading, onBatchAnalyze, onAc
   const batches = useMemo(() => {
     const b: EmailBatch[] = [];
     for (let i = 0; i < tranche.emails.length; i += 15) {
-      b.push({
-        id: b.length + 1,
-        emails: tranche.emails.slice(i, i + 15)
-      });
+      b.push({ id: b.length + 1, emails: tranche.emails.slice(i, i + 15) });
     }
     return b;
   }, [tranche.emails]);
 
   return (
-    <div className={`transition-all duration-500 rounded-[38px] overflow-hidden border ${
-      isOpen ? 'bg-white/[0.04] border-white/10 ring-1 ring-white/10' : 'bg-white/[0.01] border-white/5 hover:bg-white/[0.02]'
+    <div className={`transition-all duration-500 rounded-[40px] overflow-hidden border ${
+      isOpen ? 'bg-white/[0.04] border-white/10 shadow-2xl' : 'bg-white/[0.01] border-white/5 hover:bg-white/[0.02]'
     }`}>
-      <div className="flex items-center justify-between p-7 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
-        <div className="flex items-center gap-6 min-w-0">
+      <div className="flex items-center justify-between p-8 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
+        <div className="flex items-center gap-6">
           <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${
-            tranche.status === 'completed' ? 'bg-emerald-500/20 text-emerald-400' : 
-            tranche.status === 'running' ? 'bg-indigo-500/20 text-indigo-400 animate-pulse' : 'bg-white/5 text-white/30'
+            tranche.status === 'completed' ? 'bg-emerald-500/10 text-emerald-400' : 
+            tranche.status === 'running' ? 'bg-indigo-500/10 text-indigo-400 animate-pulse' : 'bg-white/5 text-white/30'
           }`}>
-             {tranche.status === 'completed' ? <CheckCircle2 className="w-7 h-7" /> : <Database className="w-7 h-7" />}
+             {tranche.status === 'completed' ? <Check className="w-6 h-6" /> : <Database className="w-6 h-6" />}
           </div>
-          <div className="min-w-0">
-            <h3 className="text-xl font-black text-white/90">Bloc {tranche.id} <span className="text-xs text-white/30 ml-2">({tranche.startIndex} - {tranche.startIndex + tranche.totalToFetch})</span></h3>
-            <div className="flex items-center gap-4 mt-2">
-               <div className="w-32 h-1.5 bg-white/5 rounded-full overflow-hidden">
-                  <div className={`h-full transition-all duration-1000 ${tranche.status === 'completed' ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${prog}%` }} />
+          <div>
+            <h3 className="text-xl font-black text-white/90 leading-none">Tranche {tranche.id}</h3>
+            <div className="flex items-center gap-3 mt-3">
+               <div className="w-24 h-1 bg-white/5 rounded-full overflow-hidden">
+                  <div className="h-full bg-indigo-500 transition-all duration-1000" style={{ width: `${prog}%` }} />
                </div>
-               <span className="text-xs font-black text-white/40">{tranche.fetchedCount} / {tranche.totalToFetch}</span>
-               {tranche.status === 'cooldown' && <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-[0.2em] animate-pulse">Repos Anti-429...</span>}
+               <span className="text-[10px] font-black text-white/20 uppercase tracking-widest">{tranche.fetchedCount} emails</span>
             </div>
           </div>
         </div>
         <div className="flex items-center gap-4">
            {tranche.status !== 'completed' && (
-              <button 
-                onClick={(e) => { e.stopPropagation(); tranche.status === 'running' ? onStop() : onStart(); }}
+              <button onClick={(e) => { e.stopPropagation(); tranche.status === 'running' ? onStop() : onStart(); }}
                 disabled={isLoading && tranche.status !== 'running'}
-                className={`p-4 rounded-2xl transition-all active:scale-95 ${
-                  tranche.status === 'running' ? 'bg-red-500 text-white shadow-xl shadow-red-500/20' : 'bg-white text-black hover:bg-white/90 shadow-xl shadow-white/5'
-                }`}
-              >
-                {tranche.status === 'running' ? <StopCircle className="w-6 h-6" /> : <Play className="w-6 h-6" />}
+                className={`p-4 rounded-2xl transition-all ${tranche.status === 'running' ? 'bg-red-500 text-white' : 'bg-white text-black'}`}>
+                {tranche.status === 'running' ? <StopCircle className="w-5 h-5" /> : <Play className="w-5 h-5" />}
               </button>
            )}
         </div>
       </div>
       
       {isOpen && batches.length > 0 && (
-        <div className="px-8 pb-10 pt-4 animate-in fade-in duration-700 space-y-4">
-           <h4 className="text-[10px] font-black text-white/20 uppercase tracking-[0.3em] mb-4">Groupes d'Analyse (Lots de 15)</h4>
+        <div className="px-8 pb-10 space-y-4 animate-in slide-in-from-top-2 duration-500">
            {batches.map((batch, idx) => (
              <BatchAccordion 
-                key={idx}
-                batch={batch}
-                isLoading={isLoading}
+                key={idx} batch={batch} isLoading={isLoading}
                 onAnalyze={() => onBatchAnalyze(tranche.id, idx, batch.emails)}
-                onAction={(emailId, folder) => onAction(tranche.id, emailId, folder)}
-                onIgnore={() => {}}
+                onAction={onAction} onIgnore={() => {}}
              />
            ))}
         </div>

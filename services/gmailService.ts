@@ -1,3 +1,4 @@
+
 import { logger } from '../utils/logger';
 
 export const getTotalInboxCount = async (): Promise<number> => {
@@ -14,7 +15,11 @@ export const createGmailLabel = async (labelName: string): Promise<string | null
   try {
     const response = await window.gapi.client.gmail.users.labels.create({
       userId: 'me',
-      resource: { name: labelName }
+      resource: { 
+        name: labelName,
+        labelListVisibility: 'labelShow',
+        messageListVisibility: 'show'
+      }
     });
     logger.success(`Label créé : ${labelName}`);
     return response.result.id;
@@ -24,7 +29,33 @@ export const createGmailLabel = async (labelName: string): Promise<string | null
       const existing = list.result.labels.find((l: any) => l.name === labelName);
       return existing?.id || null;
     }
+    logger.error(`Erreur création label ${labelName}`, err);
     return null;
+  }
+};
+
+export const applyTagsToEmail = async (emailId: string, tags: string[]) => {
+  try {
+    const labelIds = [];
+    for (const tag of tags) {
+      const id = await createGmailLabel(tag);
+      if (id) labelIds.push(id);
+    }
+
+    if (labelIds.length > 0) {
+      await window.gapi.client.gmail.users.messages.batchModify({
+        userId: 'me',
+        resource: {
+          ids: [emailId],
+          addLabelIds: labelIds
+        }
+      });
+      return true;
+    }
+    return false;
+  } catch (err) {
+    logger.error(`Erreur tags pour ${emailId}`, err);
+    return false;
   }
 };
 
