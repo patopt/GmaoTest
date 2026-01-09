@@ -39,8 +39,7 @@ class Logger {
       details
     };
     
-    // Also log to browser console for redundancy
-    const style = level === 'error' ? 'color: red' : level === 'success' ? 'color: green' : level === 'warning' ? 'color: orange' : 'color: cyan';
+    const style = level === 'error' ? 'color: #ff4d4d' : level === 'success' ? 'color: #2ecc71' : level === 'warning' ? 'color: #f1c40f' : 'color: #3498db';
     console.log(`%c[${level.toUpperCase()}] ${message}`, style, details || '');
 
     this.notify(entry);
