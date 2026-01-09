@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import Header from './components/Header';
 import Setup from './components/Setup';
 import LogConsole from './components/LogConsole';
+import BatchAccordion from './components/BatchAccordion';
 import { GMAIL_DISCOVERY_DOCS, GMAIL_SCOPES, GOOGLE_CLIENT_ID, DEFAULT_AI_MODEL } from './constants';
-import { EnrichedEmail, HarvestTranche, AIAnalysis } from './types';
+import { EnrichedEmail, HarvestTranche, AIAnalysis, EmailBatch } from './types';
 import { getTotalInboxCount, createGmailLabel, moveEmailsToLabel } from './services/gmailService';
 import { analyzeWithPuter, analyzeWithGeminiSDK } from './services/aiService';
 import { Loader2, Inbox, Database, Settings, StopCircle, PlayCircle, Clock, ShieldAlert, CheckCircle2, Zap, Rocket, FolderPlus, Tag, Play } from 'lucide-react';
@@ -121,22 +123,29 @@ export default function App() {
         const messages = response.result.messages || [];
         pageToken = response.result.nextPageToken || null;
 
+        // Optimisation : Récupération parallèle par lots de 5 pour éviter le rate-limiting tout en étant rapide
         const detailed: EnrichedEmail[] = [];
-        for (const m of messages) {
+        const CONCURRENCY = 5;
+        for (let i = 0; i < messages.length; i += CONCURRENCY) {
           if (stopSignal.current) break;
-          const res = await window.gapi.client.gmail.users.messages.get({ userId: 'me', id: m.id, format: 'metadata' });
-          const h = res.result.payload.headers;
-          detailed.push({
-            id: res.result.id,
-            threadId: res.result.threadId,
-            snippet: res.result.snippet,
-            internalDate: res.result.internalDate,
-            subject: h.find((x:any) => x.name === 'Subject')?.value || '',
-            from: h.find((x:any) => x.name === 'From')?.value || '',
-            processed: false,
-            organized: false
-          });
-          await new Promise(r => setTimeout(r, 200)); 
+          const chunk = messages.slice(i, i + CONCURRENCY);
+          const chunkDetails = await Promise.all(chunk.map(async (m: any) => {
+            const res = await window.gapi.client.gmail.users.messages.get({ userId: 'me', id: m.id, format: 'metadata' });
+            const h = res.result.payload.headers;
+            return {
+              id: res.result.id,
+              threadId: res.result.threadId,
+              snippet: res.result.snippet,
+              internalDate: res.result.internalDate,
+              subject: h.find((x:any) => x.name === 'Subject')?.value || '',
+              from: h.find((x:any) => x.name === 'From')?.value || '',
+              processed: false,
+              organized: false
+            } as EnrichedEmail;
+          }));
+          detailed.push(...chunkDetails);
+          // Petit délai de sécurité entre les lots parallèles
+          await new Promise(r => setTimeout(r, 100));
         }
 
         currentEmails = [...currentEmails, ...detailed];
@@ -149,7 +158,8 @@ export default function App() {
         });
 
         if (!pageToken || fetched >= tranche.totalToFetch) break;
-        await new Promise(r => setTimeout(r, 2000));
+        // Délai plus court entre les pages list
+        await new Promise(r => setTimeout(r, 800));
       }
 
       if (stopSignal.current) {
@@ -175,12 +185,58 @@ export default function App() {
     }
   };
 
+  const handleBatchAnalyze = async (trancheId: number, batchIndex: number, emailsToAnalyze: EnrichedEmail[]) => {
+    if (loading) return;
+    setLoading(true);
+    setStatusText(`Analyse IA du groupe ${batchIndex + 1}...`);
+    try {
+      const results = config.provider === 'puter' 
+        ? await analyzeWithPuter(emailsToAnalyze, config.model)
+        : await analyzeWithGeminiSDK(emailsToAnalyze, config.model);
+
+      const tranche = tranches.find(t => t.id === trancheId);
+      if (tranche) {
+        const updatedEmails = tranche.emails.map(e => {
+          if (results[e.id]) {
+            return { ...e, analysis: results[e.id], processed: true };
+          }
+          return e;
+        });
+        updateTranche(trancheId, { emails: updatedEmails });
+        logger.success(`Groupe ${batchIndex + 1} analysé avec succès.`);
+      }
+    } catch (e) {
+      logger.error("Erreur d'analyse de groupe", e);
+    } finally {
+      setLoading(false);
+      setStatusText('');
+    }
+  };
+
+  const handleAction = async (trancheId: number, emailId: string, folder: string) => {
+    try {
+      setStatusText(`Déplacement vers ${folder}...`);
+      const success = await moveEmailsToLabel([emailId], folder);
+      if (success) {
+        const tranche = tranches.find(t => t.id === trancheId);
+        if (tranche) {
+          const updatedEmails = tranche.emails.map(e => e.id === emailId ? { ...e, organized: true } : e);
+          updateTranche(trancheId, { emails: updatedEmails });
+          logger.success(`Email déplacé vers ${folder}`);
+        }
+      }
+    } catch (e) {
+      logger.error("Erreur déplacement", e);
+    } finally {
+      setStatusText('');
+    }
+  };
+
   const runAutoPilot = async () => {
     if (isAutoPilotActive) return setIsAutoPilotActive(false);
     setIsAutoPilotActive(true);
     logger.info("Mode Auto-Pilote activé. Lancement de l'analyse et l'organisation...");
 
-    // Iterate over fetched but unorganized emails
     for (const tranche of tranches) {
       const pending = tranche.emails.filter(e => !e.organized);
       if (pending.length === 0) continue;
@@ -198,7 +254,6 @@ export default function App() {
             ? await analyzeWithPuter(chunk, config.model)
             : await analyzeWithGeminiSDK(chunk, config.model);
 
-          // Group by folder for batch move
           const folderGroups: Record<string, string[]> = {};
           chunk.forEach(e => {
             const analysis = results[e.id];
@@ -209,14 +264,12 @@ export default function App() {
             }
           });
 
-          // Perform movements
           for (const [folder, ids] of Object.entries(folderGroups)) {
              setStatusText(`Déplacement vers ${folder}...`);
              await moveEmailsToLabel(ids, folder);
              logger.info(`${ids.length} emails déplacés vers [${folder}]`);
           }
 
-          // Update local state
           const updatedEmails = tranche.emails.map(e => {
             if (results[e.id]) return { ...e, analysis: results[e.id], processed: true, organized: true };
             return e;
@@ -253,6 +306,16 @@ export default function App() {
 
   const globalFetched = useMemo(() => tranches.reduce((acc, t) => acc + t.fetchedCount, 0), [tranches]);
   const progressPercent = totalInboxCount > 0 ? Math.round((globalFetched / totalInboxCount) * 100) : 0;
+
+  const handleReset = () => {
+    localStorage.clear();
+    window.location.reload();
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('google_access_token');
+    window.location.reload();
+  };
 
   if (showSetup) return (
     <div className="bg-black min-h-screen text-white">
@@ -366,6 +429,8 @@ export default function App() {
                     isLoading={loading}
                     onStart={() => runHarvestMission(t.id)} 
                     onStop={() => stopSignal.current = true}
+                    onBatchAnalyze={handleBatchAnalyze}
+                    onAction={handleAction}
                  />
                ))}
             </div>
@@ -377,9 +442,20 @@ export default function App() {
   );
 }
 
-function MissionCard({ tranche, onStart, onStop, isLoading }: any) {
+function MissionCard({ tranche, onStart, onStop, isLoading, onBatchAnalyze, onAction }: any) {
   const [isOpen, setIsOpen] = useState(false);
   const prog = Math.round((tranche.fetchedCount / tranche.totalToFetch) * 100);
+
+  const batches = useMemo(() => {
+    const b: EmailBatch[] = [];
+    for (let i = 0; i < tranche.emails.length; i += 15) {
+      b.push({
+        id: b.length + 1,
+        emails: tranche.emails.slice(i, i + 15)
+      });
+    }
+    return b;
+  }, [tranche.emails]);
 
   return (
     <div className={`transition-all duration-500 rounded-[38px] overflow-hidden border ${
@@ -419,32 +495,21 @@ function MissionCard({ tranche, onStart, onStop, isLoading }: any) {
         </div>
       </div>
       
-      {isOpen && tranche.emails.length > 0 && (
-        <div className="px-8 pb-10 pt-4 animate-in fade-in duration-700">
-           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {tranche.emails.slice(-6).reverse().map((e: any) => (
-                <div key={e.id} className="bg-white/5 border border-white/5 p-5 rounded-3xl group/card hover:bg-white/10 transition-all">
-                   <div className="flex justify-between items-start mb-3">
-                      <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest truncate max-w-[150px]">{e.from}</p>
-                      {e.organized && <CheckCircle2 className="w-4 h-4 text-emerald-400" />}
-                   </div>
-                   <h4 className="text-xs font-bold text-white/90 line-clamp-1 mb-2">{e.subject}</h4>
-                   <p className="text-[10px] text-white/30 line-clamp-1 italic">{e.snippet}</p>
-                </div>
-              ))}
-           </div>
+      {isOpen && batches.length > 0 && (
+        <div className="px-8 pb-10 pt-4 animate-in fade-in duration-700 space-y-4">
+           <h4 className="text-[10px] font-black text-white/20 uppercase tracking-[0.3em] mb-4">Groupes d'Analyse (Lots de 15)</h4>
+           {batches.map((batch, idx) => (
+             <BatchAccordion 
+                key={idx}
+                batch={batch}
+                isLoading={isLoading}
+                onAnalyze={() => onBatchAnalyze(tranche.id, idx, batch.emails)}
+                onAction={(emailId, folder) => onAction(tranche.id, emailId, folder)}
+                onIgnore={() => {}}
+             />
+           ))}
         </div>
       )}
     </div>
   );
-}
-
-function handleReset() {
-  localStorage.clear();
-  window.location.reload();
-}
-
-function handleLogout() {
-  localStorage.removeItem('google_access_token');
-  window.location.reload();
 }
