@@ -7,7 +7,7 @@ import BatchAccordion from './components/BatchAccordion';
 import { GMAIL_DISCOVERY_DOCS, GMAIL_SCOPES, GOOGLE_CLIENT_ID, DEFAULT_AI_MODEL } from './constants';
 import { EnrichedEmail, HarvestTranche, ViewMode, FolderStyle, TrainingStep } from './types';
 import { getTotalInboxCount, moveEmailsToLabel, applyTagsToEmail, getUserLabels } from './services/gmailService';
-import { analyzeSingleEmail, cleanAIResponse } from './services/aiService';
+import { analyzeSingleEmail, cleanAIResponse, suggestFolderOptimization } from './services/aiService';
 import { GoogleGenAI } from "@google/genai";
 import { 
   Loader2, Database, Settings, StopCircle, Rocket, Layers, ListFilter, 
@@ -125,18 +125,22 @@ export default function App() {
     if (isAnalyzing) return;
     setIsAnalyzing(true);
     stopSignal.current = false;
+    
     try {
       const emailsToProcess = emailsToAnalyze.filter(e => retryOnly ? (e.failed && !e.processed) : !e.processed);
       const CONCURRENCY = config.concurrency;
+      
+      const currentLabels = await getUserLabels();
 
       for (let i = 0; i < emailsToProcess.length; i += CONCURRENCY) {
         if (stopSignal.current) break;
         const chunk = emailsToProcess.slice(i, i + CONCURRENCY);
-        setStatusText(`Titan x${CONCURRENCY} : ${i + chunk.length}/${emailsToProcess.length}`);
+        
+        const remaining = emailsToProcess.length - i;
+        setStatusText(`Analyse Titan en cours... (${remaining} emails restants)`);
 
         await Promise.all(chunk.map(async (email) => {
           try {
-            const currentLabels = await getUserLabels();
             const analysis = await analyzeSingleEmail(email, config.model, config.provider, currentLabels);
             const moved = await moveEmailsToLabel([email.id], analysis.suggestedFolder, config.folderStyle);
             if (moved && analysis.tags.length > 0) {
@@ -145,7 +149,8 @@ export default function App() {
             setTranches(curr => curr.map(t => t.id === trancheId ? {
               ...t, emails: t.emails.map(e => e.id === email.id ? { ...e, analysis, processed: true, organized: moved, failed: false } : e)
             } : t));
-          } catch {
+          } catch (error) {
+            logger.error(`Erreur sur l'email ${email.id}`, error);
             setTranches(curr => curr.map(t => t.id === trancheId ? {
               ...t, emails: t.emails.map(e => e.id === email.id ? { ...e, failed: true } : e)
             } : t));
@@ -172,7 +177,7 @@ export default function App() {
       let allEmails = [...tranche.emails];
 
       while (fetched < tranche.totalToFetch && !stopSignal.current) {
-        setStatusText(`Récolte : ${fetched}/${tranche.totalToFetch}`);
+        setStatusText(`Récolte en cours : ${fetched}/${tranche.totalToFetch}`);
         const response: any = await window.gapi.client.gmail.users.messages.list({ 
           userId: 'me', 
           maxResults: 100, 
@@ -214,31 +219,31 @@ export default function App() {
   const startAutopilot = async () => {
     setIsAutopilotRunning(true);
     stopSignal.current = false;
-    setAutopilotLogs(["[START] Autopilote Titanesque Activé.", "[STEP 1] Récolte globale des emails..."]);
+    setAutopilotLogs(["[START] Lancement de l'Autopilote.", "[STEP 1/2] Récolte de tous les emails en cours..."]);
     
-    // 1. Récolte complète
+    // 1. Récolte complète de toutes les tranches nécessaires
     for (const tranche of tranches) {
       if (stopSignal.current) break;
       if (tranche.status !== 'completed') {
-        setAutopilotLogs(prev => [`[HARVEST] Bloc ${tranche.id}`, ...prev]);
+        setAutopilotLogs(prev => [`[HARVEST] Début de la récolte pour le Bloc ${tranche.id}`, ...prev]);
         await runHarvestMission(tranche.id);
       }
     }
     
     if (stopSignal.current) {
-      setAutopilotLogs(prev => ["[STOP] Arrêt demandé.", ...prev]);
+      setAutopilotLogs(prev => ["[STOP] Autopilote arrêté prématurément.", ...prev]);
       setIsAutopilotRunning(false);
       return;
     }
 
-    setAutopilotLogs(prev => ["[STEP 2] Analyse Neuronale par Blocs...", ...prev]);
+    setAutopilotLogs(prev => ["[STEP 2/2] Analyse neuronale par blocs...", ...prev]);
     
-    // 2. Analyse
+    // 2. Analyse complète de toutes les tranches
     for (const tranche of tranches) {
       if (stopSignal.current) break;
-      const pending = tranche.emails.filter(e => !e.processed);
-      if (pending.length > 0) {
-        setAutopilotLogs(prev => [`[ANALYSE] Bloc ${tranche.id} (${pending.length} mails)`, ...prev]);
+      const unanalyzed = tranche.emails.filter(e => !e.processed);
+      if (unanalyzed.length > 0) {
+        setAutopilotLogs(prev => [`[ANALYSE] Début de l'analyse du Bloc ${tranche.id} (${unanalyzed.length} emails)`, ...prev]);
         await handleSequentialAnalyze(tranche.id, tranche.emails);
       }
     }
@@ -247,18 +252,29 @@ export default function App() {
     setAutopilotLogs(prev => ["[FIN] Autopilote terminé avec succès.", ...prev]);
   };
 
-  const optimizeFolders = async () => {
-    if (stats.folders.length < 2) return alert("Pas assez de dossiers.");
-    setStatusText("Analyse de l'arborescence...");
+  const handleOptimizeFolders = async () => {
+    const currentFolders = await getUserLabels();
+    if (currentFolders.length < 2) {
+      alert("Pas assez de dossiers pour optimiser.");
+      return;
+    }
+    
     setIsAnalyzing(true);
+    setStatusText("Optimisation de l'arborescence...");
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const prompt = `Voici mes dossiers Gmail : ${stats.folders.map(f => f[0]).join(', ')}. Suggère des simplifications en JSON : {"suggestions": [{"from": "Ancien", "to": "Nouveau", "reason": "Pq"}]}`;
-      const response = await ai.models.generateContent({ model: config.model, contents: prompt, config: { responseMimeType: "application/json" } });
-      const sugg = JSON.parse(cleanAIResponse(response.text)).suggestions;
-      alert(`Suggestions d'optimisation : ${sugg.length}\n${sugg.map((s:any) => `- ${s.from} -> ${s.to}`).join('\n')}`);
-    } catch { alert("Erreur optimisation."); }
-    finally { setIsAnalyzing(false); setStatusText(""); }
+      const result = await suggestFolderOptimization(currentFolders);
+      if (result.suggestions && result.suggestions.length > 0) {
+        const msg = result.suggestions.map((s: any) => `• De "${s.from}" vers "${s.to}" : ${s.reason}`).join('\n');
+        alert("Suggestions d'optimisation IA :\n\n" + msg);
+      } else {
+        alert("Votre arborescence est déjà optimale.");
+      }
+    } catch (e) {
+      logger.error("Erreur optimisation", e);
+    } finally {
+      setIsAnalyzing(false);
+      setStatusText('');
+    }
   };
 
   const allEmails = useMemo(() => tranches.flatMap(t => t.emails), [tranches]);
@@ -309,12 +325,24 @@ export default function App() {
       )}
 
       <main className="flex-1 flex flex-col overflow-hidden relative">
-        {isAnalyzing && (
+        {/* PROGRESS OVERLAY WINDOW */}
+        {(isAnalyzing || loading) && (
           <div className="fixed inset-0 z-[300] bg-black/80 backdrop-blur-md flex items-center justify-center p-6 animate-in fade-in">
-             <div className="bg-[#0A0A0A] border border-white/10 p-10 rounded-[48px] shadow-4xl flex flex-col items-center gap-6 max-w-sm w-full">
-                <div className="relative"><Loader2 className="w-16 h-16 text-indigo-500 animate-spin" /><Sparkles className="absolute inset-0 m-auto w-6 h-6 text-indigo-400 animate-pulse" /></div>
-                <div className="text-center space-y-2"><h3 className="text-xl font-black uppercase tracking-widest">Calcul Neural...</h3><p className="text-[10px] font-black text-white/30 uppercase tracking-[0.4em]">{statusText}</p></div>
-                <button onClick={() => stopSignal.current = true} className="px-6 py-3 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-2xl text-[10px] font-black uppercase transition-all">Interrompre</button>
+             <div className="bg-[#0A0A0A] border border-white/10 p-10 rounded-[48px] shadow-4xl flex flex-col items-center gap-6 max-w-sm w-full text-center">
+                <div className="relative">
+                  <Loader2 className="w-16 h-16 text-indigo-500 animate-spin" />
+                  <Sparkles className="absolute inset-0 m-auto w-6 h-6 text-indigo-400 animate-pulse" />
+                </div>
+                <div className="space-y-2">
+                   <h3 className="text-xl font-black uppercase tracking-widest">Calcul Neural...</h3>
+                   <p className="text-[10px] font-black text-white/30 uppercase tracking-[0.4em]">{statusText}</p>
+                </div>
+                <button 
+                  onClick={() => stopSignal.current = true} 
+                  className="px-6 py-3 bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white rounded-2xl text-[10px] font-black uppercase transition-all"
+                >
+                  Interrompre
+                </button>
              </div>
           </div>
         )}
@@ -341,7 +369,7 @@ export default function App() {
 
                 {isAutopilotRunning && (
                   <div className="bg-indigo-600/10 border border-indigo-500/20 rounded-[48px] p-8 space-y-6">
-                     <h3 className="text-xs font-black uppercase tracking-[0.5em] text-indigo-400 flex items-center gap-3"><Zap className="w-5 h-5" /> Autopilot Live</h3>
+                     <h3 className="text-xs font-black uppercase tracking-[0.5em] text-indigo-400 flex items-center gap-3"><Zap className="w-5 h-5" /> Autopilot Live Monitor</h3>
                      <div className="bg-black/40 rounded-3xl p-6 font-mono text-[11px] h-40 overflow-y-auto space-y-2 no-scrollbar">
                         {autopilotLogs.map((log, i) => <div key={i} className="text-white/60"><span className="text-indigo-500/60 font-bold">[{i}]</span> {log}</div>)}
                      </div>
@@ -434,7 +462,12 @@ export default function App() {
                    <div className="space-y-6">
                       <div className="flex justify-between items-center px-2">
                         <h3 className="text-xs font-black uppercase tracking-widest text-white/20">Répartition Dossiers</h3>
-                        <button onClick={optimizeFolders} className="px-5 py-2.5 bg-indigo-600 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"><Sparkles className="w-3 h-3" /> Optimiser</button>
+                        <button 
+                          onClick={handleOptimizeFolders}
+                          className="px-5 py-2.5 bg-indigo-600 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 hover:scale-105 transition-all"
+                        >
+                          <Sparkles className="w-3 h-3" /> Optimiser Dossiers
+                        </button>
                       </div>
                       <div className="space-y-2">
                          {stats.folders.map(([n, c]) => (
