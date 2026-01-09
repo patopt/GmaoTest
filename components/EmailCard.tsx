@@ -1,70 +1,66 @@
 import React from 'react';
-import { Tag, FolderInput, AlertCircle } from 'lucide-react';
+import { Tag, FolderInput, Check, MoveRight } from 'lucide-react';
 import { EnrichedEmail } from '../types';
 
 interface EmailCardProps {
   email: EnrichedEmail;
+  onAction: (folder: string) => void;
 }
 
-const EmailCard: React.FC<EmailCardProps> = ({ email }) => {
+const EmailCard: React.FC<EmailCardProps> = ({ email, onAction }) => {
   const analysis = email.analysis;
 
-  if (!analysis) return null;
-
-  const sentimentColor =
-    analysis.sentiment === 'Positif'
-      ? 'text-green-400'
-      : analysis.sentiment === 'Négatif'
-      ? 'text-red-400'
-      : 'text-slate-400';
-
   return (
-    <div className="bg-slate-800 border border-slate-700 rounded-xl p-5 hover:border-indigo-500/50 transition-all duration-300 shadow-lg">
+    <div className={`bg-slate-800 border rounded-2xl p-5 transition-all duration-300 shadow-xl h-full flex flex-col ${
+      analysis ? 'border-indigo-500/30 bg-slate-800/80' : 'border-slate-700 opacity-60'
+    }`}>
       <div className="flex justify-between items-start mb-3">
-        <div className="flex-1 min-w-0 pr-4">
-          <h3 className="text-lg font-semibold text-white truncate" title={email.subject}>
-            {email.subject}
+        <div className="flex-1 min-w-0 pr-2">
+          <h3 className="text-sm font-bold text-white truncate" title={email.subject}>
+            {email.subject || '(Sans objet)'}
           </h3>
-          <p className="text-sm text-slate-400 truncate">{email.from}</p>
+          <p className="text-[10px] text-slate-500 font-mono truncate">{email.from}</p>
         </div>
-        <span
-          className={`text-xs px-2 py-1 rounded-full border ${
-            analysis.category === 'Urgent'
-              ? 'bg-red-500/20 border-red-500/50 text-red-200'
-              : 'bg-indigo-500/20 border-indigo-500/50 text-indigo-200'
-          }`}
-        >
-          {analysis.category}
-        </span>
+        {analysis && (
+          <span className="text-[9px] font-black px-2 py-0.5 rounded-md border bg-indigo-500/10 border-indigo-500/30 text-indigo-300 uppercase tracking-tighter shrink-0">
+            {analysis.category}
+          </span>
+        )}
       </div>
 
-      <p className="text-slate-300 text-sm mb-4 line-clamp-2">
+      <p className="text-slate-400 text-xs mb-6 line-clamp-2 italic">
         {email.snippet}
       </p>
 
-      {/* AI Insights */}
-      <div className="bg-slate-900/50 rounded-lg p-3 space-y-2">
-        <div className="flex items-center justify-between text-xs">
-          <span className="text-slate-500">Résumé IA:</span>
-          <span className={`font-medium ${sentimentColor}`}>{analysis.sentiment}</span>
-        </div>
-        <p className="text-sm text-slate-300 italic">"{analysis.summary}"</p>
-        
-        <div className="h-px bg-slate-700/50 my-2" />
-        
-        <div className="flex flex-wrap gap-2 items-center">
-            <div className="flex items-center text-xs text-indigo-400 bg-indigo-950/30 px-2 py-1 rounded">
-                <FolderInput className="w-3 h-3 mr-1.5" />
-                Dossier: {analysis.suggestedFolder}
+      {analysis ? (
+        <div className="mt-auto space-y-4">
+          <div className="bg-slate-900/80 rounded-xl p-3 border border-slate-700/50">
+            <p className="text-xs text-indigo-200 font-medium leading-relaxed">
+              <span className="text-slate-500 mr-2 text-[10px] font-bold">IA:</span> 
+              "{analysis.summary}"
+            </p>
+            <div className="flex flex-wrap gap-1.5 mt-2">
+              {analysis.tags.slice(0, 3).map((tag, idx) => (
+                <span key={idx} className="text-[9px] bg-slate-800 text-slate-400 px-1.5 py-0.5 rounded border border-slate-700 flex items-center gap-1">
+                   <Tag className="w-2.5 h-2.5" /> {tag}
+                </span>
+              ))}
             </div>
-            {analysis.tags.map((tag, idx) => (
-                <div key={idx} className="flex items-center text-xs text-slate-400 bg-slate-800 border border-slate-700 px-2 py-1 rounded">
-                    <Tag className="w-3 h-3 mr-1" />
-                    {tag}
-                </div>
-            ))}
+          </div>
+
+          <button 
+            onClick={() => onAction(analysis.suggestedFolder)}
+            className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 group shadow-lg shadow-indigo-600/10"
+          >
+            Déplacer vers {analysis.suggestedFolder}
+            <MoveRight className="w-3.5 h-3.5 group-hover:translate-x-1 transition-transform" />
+          </button>
         </div>
-      </div>
+      ) : (
+        <div className="mt-auto py-8 text-center border-t border-slate-700/50">
+          <div className="text-[10px] font-bold text-slate-600 uppercase tracking-widest">En attente d'analyse</div>
+        </div>
+      )}
     </div>
   );
 };

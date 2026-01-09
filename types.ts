@@ -3,46 +3,34 @@ export interface EmailMessage {
   threadId: string;
   snippet: string;
   internalDate: string;
-  payload?: {
-    headers: { name: string; value: string }[];
-    body?: { data?: string };
-  };
   subject?: string;
   from?: string;
   date?: string;
 }
 
 export interface AIAnalysis {
-  category: 'Travail' | 'Personnel' | 'Finance' | 'Promotions' | 'Social' | 'Urgent' | 'Autre';
+  category: string;
   tags: string[];
   suggestedFolder: string;
   summary: string;
   sentiment: 'Positif' | 'Neutre' | 'Négatif';
+  action?: 'archive' | 'keep' | 'delete';
 }
 
 export interface EnrichedEmail extends EmailMessage {
   analysis?: AIAnalysis;
+  processed?: boolean;
 }
 
-// Puter.js Global Types
-export interface PuterChatResponse {
-  text: string;
-  [key: string]: any;
-}
-
-export interface PuterAI {
-  chat: (
-    prompt: string,
-    options?: { model: string; stream?: boolean }
-  ) => Promise<PuterChatResponse>;
+export interface EmailBatch {
+  id: number;
+  emails: EnrichedEmail[];
+  status: 'pending' | 'processing' | 'completed' | 'error';
 }
 
 declare global {
   interface Window {
-    puter: {
-      ai: PuterAI;
-      print: (msg: any) => void;
-    };
+    puter: any;
     google: any;
     gapi: any;
   }
