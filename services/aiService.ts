@@ -10,8 +10,8 @@ export const cleanAIResponse = (text: string): string => {
   return clean;
 };
 
-export const analyzeWithGeminiSDK = async (emails: EmailMessage[], model: string): Promise<Record<string, AIAnalysis>> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+export const analyzeWithGeminiSDK = async (emails: EmailMessage[], model: string, apiKey: string): Promise<Record<string, AIAnalysis>> => {
+  const ai = new GoogleGenAI({ apiKey: apiKey || process.env.API_KEY || '' });
   const prompt = `Analyse ces emails et retourne UNIQUEMENT un objet JSON (ID en clé) : ${JSON.stringify(emails)}`;
   
   const response = await ai.models.generateContent({
@@ -26,19 +26,23 @@ export const analyzeWithGeminiSDK = async (emails: EmailMessage[], model: string
 export const analyzeWithPuter = async (emails: EmailMessage[], model: string): Promise<Record<string, AIAnalysis>> => {
   const prompt = `Tu es un expert Gmail. Analyse ces emails et retourne un objet JSON (clé=ID). Format: {"id": {"category": "...", "tags": [], "suggestedFolder": "...", "summary": "...", "sentiment": "..."}}. Emails: ${JSON.stringify(emails)}`;
   
+  if (!window.puter) throw new Error("Puter.js non chargé.");
+  
   const response = await window.puter.ai.chat(prompt, { model: model });
   const clean = cleanAIResponse(response.text);
   return JSON.parse(clean);
 };
 
-export const testAIConnection = async (provider: string, model: string): Promise<boolean> => {
-  const prompt = "Répond 'OK' en minuscules.";
+export const testAIConnection = async (provider: string, model: string, apiKey: string): Promise<boolean> => {
+  const prompt = "Répond uniquement 'ok'.";
   try {
     if (provider === 'puter') {
       const resp = await window.puter.ai.chat(prompt, { model });
       return resp.text.toLowerCase().includes('ok');
     } else {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const actualKey = apiKey || process.env.API_KEY || '';
+      if (!actualKey) return false;
+      const ai = new GoogleGenAI({ apiKey: actualKey });
       const resp = await ai.models.generateContent({ model, contents: prompt });
       return resp.text.toLowerCase().includes('ok');
     }

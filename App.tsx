@@ -2,18 +2,17 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import Header from './components/Header';
 import Setup from './components/Setup';
 import LogConsole from './components/LogConsole';
-import BatchAccordion from './components/BatchAccordion';
-import { GMAIL_DISCOVERY_DOCS, GMAIL_SCOPES, BATCH_SIZE, GOOGLE_CLIENT_ID } from './constants';
+import { GMAIL_DISCOVERY_DOCS, GMAIL_SCOPES, GOOGLE_CLIENT_ID } from './constants';
 import { EnrichedEmail, HarvestTranche, TaskStatus } from './types';
-import { analyzeWithPuter, analyzeWithGeminiSDK } from './services/aiService';
-import { moveEmailToLabel, bulkOrganize, getTotalInboxCount } from './services/gmailService';
-import { Loader2, RefreshCw, Inbox, Zap, Database, Settings, StopCircle, PlayCircle, Clock, ShieldAlert } from 'lucide-react';
+import { getTotalInboxCount } from './services/gmailService';
+import { Loader2, Inbox, Database, Settings, StopCircle, PlayCircle, Clock, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { logger } from './utils/logger';
 
 export default function App() {
   const [config, setConfig] = useState(() => ({
     provider: localStorage.getItem('ai_provider') || 'puter',
-    model: localStorage.getItem('ai_model') || 'gemini-3-flash-preview'
+    model: localStorage.getItem('ai_model') || 'gemini-2.5-pro-preview',
+    apiKey: localStorage.getItem('gemini_api_key') || ''
   }));
   
   const [showSetup, setShowSetup] = useState(false);
@@ -24,24 +23,17 @@ export default function App() {
   
   const [totalInboxCount, setTotalInboxCount] = useState<number>(() => Number(localStorage.getItem('total_inbox_count')) || 0);
   const [tranches, setTranches] = useState<HarvestTranche[]>(() => {
-    const saved = localStorage.getItem('harvest_tranches_v5');
+    const saved = localStorage.getItem('harvest_tranches_v6');
     return saved ? JSON.parse(saved) : [];
   });
 
-  const [handledIds, setHandledIds] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem('handled_email_ids_v5');
-    return saved ? new Set(JSON.parse(saved)) : new Set();
-  });
-
   const stopSignal = useRef<boolean>(false);
-  const cooldownRef = useRef<number | null>(null);
+  const cooldownTimers = useRef<Record<number, number>>({});
 
-  // Persistence
   useEffect(() => {
-    localStorage.setItem('harvest_tranches_v5', JSON.stringify(tranches));
-    localStorage.setItem('handled_email_ids_v5', JSON.stringify(Array.from(handledIds)));
+    localStorage.setItem('harvest_tranches_v6', JSON.stringify(tranches));
     localStorage.setItem('total_inbox_count', String(totalInboxCount));
-  }, [tranches, handledIds, totalInboxCount]);
+  }, [tranches, totalInboxCount]);
 
   const initGoogleServices = useCallback(() => {
     const gapiScript = document.createElement('script');
@@ -119,7 +111,7 @@ export default function App() {
   const startHarvesting = async (trancheId: number) => {
     if (loading) return;
     const tranche = tranches.find(t => t.id === trancheId);
-    if (!tranche || tranche.status === 'completed') return;
+    if (!tranche || tranche.status === 'completed' || tranche.status === 'cooldown') return;
 
     stopSignal.current = false;
     setLoading(true);
@@ -127,82 +119,96 @@ export default function App() {
 
     try {
       let currentEmails = [...tranche.emails];
-      let fetchedInThisSession = tranche.fetchedCount;
+      let fetchedInTranche = tranche.fetchedCount;
       let pageToken = tranche.nextPageToken || undefined;
 
-      // Anti-block: fetching in small sub-batches with delays
-      const SUB_BATCH_FETCH_SIZE = 50; 
-      const API_DELAY = 1200; // 1.2s between sub-calls to avoid 429
+      const SUB_FETCH_SIZE = 50; 
+      const API_DELAY = 2000; // 2s entre sub-batch pour sécurité
 
-      while (fetchedInThisSession < tranche.totalToFetch && !stopSignal.current) {
-        setStatusText(`Tranche ${trancheId}: ${fetchedInThisSession}/${tranche.totalToFetch} emails...`);
+      while (fetchedInTranche < tranche.totalToFetch && !stopSignal.current) {
+        setStatusText(`Tranche ${trancheId}: ${fetchedInTranche}/${tranche.totalToFetch}...`);
         
-        const response: any = await window.gapi.client.gmail.users.messages.list({ 
-          userId: 'me', 
-          maxResults: Math.min(SUB_BATCH_FETCH_SIZE, tranche.totalToFetch - fetchedInThisSession),
-          pageToken: pageToken,
-          labelIds: ['INBOX'] 
-        });
+        try {
+          const response: any = await window.gapi.client.gmail.users.messages.list({ 
+            userId: 'me', 
+            maxResults: Math.min(SUB_FETCH_SIZE, tranche.totalToFetch - fetchedInTranche),
+            pageToken: pageToken,
+            labelIds: ['INBOX'] 
+          });
 
-        const messages = response.result.messages || [];
-        pageToken = response.result.nextPageToken || null;
+          const messages = response.result.messages || [];
+          pageToken = response.result.nextPageToken || null;
 
-        // Fetch individual details with more throttling
-        const detailedEmails: EnrichedEmail[] = [];
-        for (const m of messages) {
-          if (stopSignal.current) break;
-          try {
-            const res = await window.gapi.client.gmail.users.messages.get({ userId: 'me', id: m.id, format: 'full' });
-            const payload = res.result.payload;
-            const headers = payload.headers;
-            detailedEmails.push({
-              id: res.result.id,
-              threadId: res.result.threadId,
-              snippet: res.result.snippet,
-              internalDate: res.result.internalDate,
-              subject: headers.find((h: any) => h.name === 'Subject')?.value || '(Sans objet)',
-              from: headers.find((h: any) => h.name === 'From')?.value || 'Inconnu',
-              processed: false
-            });
-            // Tiny delay per individual email to avoid burst 429
-            await new Promise(r => setTimeout(r, 150));
-          } catch (e: any) {
-            if (e.status === 429) {
-              logger.error("429 detected, pausing for 10s...");
-              await new Promise(r => setTimeout(r, 10000));
+          const detailedEmails: EnrichedEmail[] = [];
+          for (const m of messages) {
+            if (stopSignal.current) break;
+            try {
+              const res = await window.gapi.client.gmail.users.messages.get({ userId: 'me', id: m.id, format: 'metadata' });
+              const headers = res.result.payload.headers;
+              detailedEmails.push({
+                id: res.result.id,
+                threadId: res.result.threadId,
+                snippet: res.result.snippet,
+                internalDate: res.result.internalDate,
+                subject: headers.find((h: any) => h.name === 'Subject')?.value || '(Sans objet)',
+                from: headers.find((h: any) => h.name === 'From')?.value || 'Inconnu',
+                processed: false
+              });
+              await new Promise(r => setTimeout(r, 200)); // Throttling
+            } catch (e: any) {
+              if (e.status === 429) {
+                logger.warn("Limite atteinte. Pause de 10s...");
+                await new Promise(r => setTimeout(r, 10000));
+              }
             }
           }
+
+          currentEmails = [...currentEmails, ...detailedEmails];
+          fetchedInTranche += detailedEmails.length;
+          
+          updateTranche(trancheId, { 
+            emails: currentEmails, 
+            fetchedCount: fetchedInTranche,
+            nextPageToken: pageToken 
+          });
+
+          if (!pageToken || fetchedInTranche >= tranche.totalToFetch) break;
+          await new Promise(r => setTimeout(r, API_DELAY));
+        } catch (err: any) {
+          if (err.status === 429) {
+             logger.error("Bloqué par Google (429). Arrêt de sécurité.");
+             stopSignal.current = true;
+          } else {
+             throw err;
+          }
         }
-
-        currentEmails = [...currentEmails, ...detailedEmails];
-        fetchedInThisSession += detailedEmails.length;
-        
-        updateTranche(trancheId, { 
-          emails: currentEmails, 
-          fetchedCount: fetchedInThisSession,
-          nextPageToken: pageToken 
-        });
-
-        if (!pageToken || fetchedInThisSession >= tranche.totalToFetch) break;
-        
-        // Anti-block cooldown
-        await new Promise(r => setTimeout(r, API_DELAY));
       }
 
       if (stopSignal.current) {
         updateTranche(trancheId, { status: 'stopped' });
-        logger.info(`Récolte arrêtée manuellement pour la tranche ${trancheId}.`);
       } else {
-        updateTranche(trancheId, { status: 'completed' });
-        logger.success(`Tranche ${trancheId} récoltée entièrement.`);
+        updateTranche(trancheId, { status: 'cooldown' });
+        logger.success(`Tranche ${trancheId} finie. Cooldown actif.`);
+        startCooldown(trancheId);
       }
     } catch (err: any) {
-      logger.error("Erreur de récolte", err);
+      logger.error("Erreur récolte", err);
       updateTranche(trancheId, { status: 'error' });
     } finally {
       setLoading(false);
       setStatusText('');
     }
+  };
+
+  const startCooldown = (id: number) => {
+    let timeLeft = 30; // 30s de pause obligatoire entre tranches de 1000
+    const interval = setInterval(() => {
+      timeLeft--;
+      if (timeLeft <= 0) {
+        clearInterval(interval);
+        updateTranche(id, { status: 'completed' });
+      }
+    }, 1000);
   };
 
   const stopHarvesting = () => {
@@ -215,18 +221,24 @@ export default function App() {
     window.location.reload();
   };
 
-  const handleLogout = () => {
-    localStorage.removeItem('google_access_token');
-    window.location.reload();
-  };
-
   const globalFetched = useMemo(() => tranches.reduce((acc, t) => acc + t.fetchedCount, 0), [tranches]);
   const progressPercent = totalInboxCount > 0 ? Math.round((globalFetched / totalInboxCount) * 100) : 0;
 
   if (showSetup) return (
     <div className="bg-[#050505] min-h-screen text-white font-sans">
       <Header userEmail={userEmail} onLogout={handleLogout} />
-      <Setup onSave={() => setShowSetup(false)} onReset={handleReset} onLogout={handleLogout} isLoggedIn={!!userEmail} />
+      <Setup 
+        onSave={(prov, mod, key) => {
+          localStorage.setItem('ai_provider', prov);
+          localStorage.setItem('ai_model', mod);
+          localStorage.setItem('gemini_api_key', key);
+          setConfig({ provider: prov, model: mod, apiKey: key });
+          setShowSetup(false);
+        }} 
+        onReset={handleReset} 
+        onLogout={handleLogout} 
+        isLoggedIn={!!userEmail} 
+      />
       <LogConsole />
     </div>
   );
@@ -245,7 +257,7 @@ export default function App() {
                   <Inbox className="w-14 h-14 text-white" />
                 </div>
                 <h2 className="text-5xl font-black text-white mb-6 tracking-tight leading-none">AI Organizer</h2>
-                <p className="text-white/40 mb-12 text-xl font-medium leading-relaxed">Le moteur de récolte ultra-sécurisé par tranches.</p>
+                <p className="text-white/40 mb-12 text-xl font-medium leading-relaxed">Récolte Gmail par tranches de 1000 avec protection anti-ban.</p>
                 <button 
                   onClick={() => (window as any).tokenClient.requestAccessToken({ prompt: 'select_account' })}
                   disabled={!isClientReady}
@@ -259,27 +271,27 @@ export default function App() {
           </div>
         ) : (
           <div className="animate-in fade-in slide-in-from-bottom-12 duration-1000">
-            {/* Dashboard Stats */}
+            {/* Stats */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-12">
                <div className="bg-white/[0.03] backdrop-blur-3xl p-8 rounded-[40px] border border-white/10 flex items-center gap-6">
                   <div className="w-16 h-16 bg-indigo-500/10 rounded-2xl flex items-center justify-center text-indigo-400"><Database className="w-8 h-8" /></div>
                   <div>
-                    <div className="text-[11px] font-black text-white/20 uppercase tracking-[0.2em]">Inbox Total</div>
+                    <div className="text-[11px] font-black text-white/20 uppercase tracking-[0.2em]">Total Emails</div>
                     <div className="text-3xl font-black text-white">{totalInboxCount.toLocaleString()}</div>
                   </div>
                </div>
                <div className="bg-white/[0.03] backdrop-blur-3xl p-8 rounded-[40px] border border-white/10 flex items-center gap-6">
                   <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl flex items-center justify-center text-emerald-400"><CheckCircle2 className="w-8 h-8" /></div>
                   <div>
-                    <div className="text-[11px] font-black text-white/20 uppercase tracking-[0.2em]">Récupérés</div>
+                    <div className="text-[11px] font-black text-white/20 uppercase tracking-[0.2em]">En Cache</div>
                     <div className="text-3xl font-black text-white">{globalFetched.toLocaleString()}</div>
                   </div>
                </div>
                <div className="bg-white/[0.03] backdrop-blur-3xl p-8 rounded-[40px] border border-white/10 flex items-center gap-6">
                   <div className="w-16 h-16 bg-amber-500/10 rounded-2xl flex items-center justify-center text-amber-400"><Clock className="w-8 h-8" /></div>
                   <div>
-                    <div className="text-[11px] font-black text-white/20 uppercase tracking-[0.2em]">Estimation</div>
-                    <div className="text-3xl font-black text-white">~{Math.ceil((totalInboxCount - globalFetched) * 0.3 / 60)} min</div>
+                    <div className="text-[11px] font-black text-white/20 uppercase tracking-[0.2em]">Temps estimé</div>
+                    <div className="text-3xl font-black text-white">~{Math.ceil((totalInboxCount - globalFetched) * 0.4 / 60)} min</div>
                   </div>
                </div>
             </div>
@@ -288,7 +300,7 @@ export default function App() {
             <div className="bg-white/[0.02] backdrop-blur-2xl p-8 rounded-[48px] border border-white/5 mb-12 shadow-2xl">
               <div className="flex justify-between items-end mb-10">
                 <div className="space-y-1">
-                  <h3 className="text-xs font-black text-white/30 uppercase tracking-[0.3em]">Récolte Globale</h3>
+                  <h3 className="text-xs font-black text-white/30 uppercase tracking-[0.3em]">Progression Totale</h3>
                   <p className="text-6xl font-black text-white tracking-tighter">{progressPercent}%</p>
                 </div>
                 <div className="flex gap-4">
@@ -302,12 +314,11 @@ export default function App() {
               </div>
             </div>
 
-            {/* Anti-Block Status */}
             <div className="bg-amber-500/5 border border-amber-500/20 p-5 rounded-3xl mb-8 flex items-center gap-4">
                <ShieldAlert className="w-6 h-6 text-amber-400 shrink-0" />
                <p className="text-xs font-medium text-amber-200/60 leading-relaxed">
-                 Système de protection actif : Les requêtes sont espacées pour éviter le blocage Google (Erreur 429). 
-                 En cas d'arrêt, l'application se souvient de l'étape exacte pour chaque tranche.
+                 Mode Sécurisé Actif : Récupération progressive avec minuteur de repos. 
+                 État sauvegardé en temps réel.
                </p>
             </div>
 
@@ -345,7 +356,6 @@ export default function App() {
   );
 }
 
-// Sub-component for Tranche view
 function TrancheAccordion({ tranche, onStart, onStop, isLoading }: { tranche: HarvestTranche, onStart: () => void, onStop: () => void, isLoading: boolean }) {
   const [isOpen, setIsOpen] = useState(false);
   const progress = Math.round((tranche.fetchedCount / tranche.totalToFetch) * 100);
@@ -363,13 +373,14 @@ function TrancheAccordion({ tranche, onStart, onStop, isLoading }: { tranche: Ha
              {tranche.status === 'completed' ? <CheckCircle2 className="w-7 h-7" /> : <Database className="w-7 h-7" />}
           </div>
           <div className="min-w-0">
-            <h3 className="text-xl font-black text-white/90">Tranche {tranche.id} <span className="text-xs text-white/30 font-bold ml-2">({tranche.startIndex} - {tranche.startIndex + tranche.totalToFetch})</span></h3>
+            <h3 className="text-xl font-black text-white/90">Bloc {tranche.id} <span className="text-xs text-white/30 font-bold ml-2">({tranche.startIndex} - {tranche.startIndex + tranche.totalToFetch})</span></h3>
             <div className="flex items-center gap-4 mt-2">
                <div className="w-32 h-2 bg-white/5 rounded-full overflow-hidden">
                   <div className={`h-full transition-all duration-1000 ${tranche.status === 'completed' ? 'bg-emerald-500' : 'bg-indigo-500'}`} style={{ width: `${progress}%` }} />
                </div>
                <span className="text-xs font-black text-white/40">{tranche.fetchedCount} / {tranche.totalToFetch}</span>
                {tranche.status === 'stopped' && <span className="text-[10px] font-bold text-amber-400 uppercase tracking-widest px-2 py-0.5 bg-amber-400/10 rounded-full">En pause</span>}
+               {tranche.status === 'cooldown' && <span className="text-[10px] font-bold text-indigo-400 uppercase tracking-widest px-2 py-0.5 bg-indigo-400/10 rounded-full animate-pulse">Repos...</span>}
             </div>
           </div>
         </div>
@@ -392,18 +403,13 @@ function TrancheAccordion({ tranche, onStart, onStop, isLoading }: { tranche: Ha
       {isOpen && tranche.emails.length > 0 && (
         <div className="px-8 pb-8 space-y-4 border-t border-white/5 pt-6">
            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {tranche.emails.slice(0, 10).map(e => (
+              {tranche.emails.slice(-9).reverse().map(e => (
                 <div key={e.id} className="bg-white/5 p-4 rounded-3xl border border-white/5">
                    <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest truncate mb-1">{e.from}</p>
-                   <p className="text-xs font-bold text-white/90 truncate mb-2">{e.subject}</p>
+                   <p className="text-xs font-bold text-white/90 truncate mb-1">{e.subject}</p>
                    <p className="text-[10px] text-white/30 line-clamp-1 italic">{e.snippet}</p>
                 </div>
               ))}
-              {tranche.emails.length > 10 && (
-                <div className="flex items-center justify-center p-4 bg-white/[0.02] rounded-3xl border border-dashed border-white/10">
-                   <span className="text-[10px] font-black text-white/20 uppercase tracking-widest">+ {tranche.emails.length - 10} autres emails</span>
-                </div>
-              )}
            </div>
         </div>
       )}
@@ -411,10 +417,7 @@ function TrancheAccordion({ tranche, onStart, onStop, isLoading }: { tranche: Ha
   );
 }
 
-function CheckCircle2({ className }: { className?: string }) {
-  return (
-    <svg xmlns="http://www.w3.org/2000/svg" className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20 6 9 17l-5-5"/>
-    </svg>
-  );
+function handleLogout() {
+  localStorage.removeItem('google_access_token');
+  window.location.reload();
 }
