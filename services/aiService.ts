@@ -26,22 +26,22 @@ export const analyzeSingleEmail = async (
   const prompt = `
     RÔLE : ORGANISATEUR GMAIL TITAN.
     
-    DOSSIERS ET TAGS DÉJÀ EXISTANTS DANS LE GMAIL DE L'UTILISATEUR : 
+    DOSSIERS EXISTANTS DANS LE GMAIL DE L'UTILISATEUR : 
     ${existingFolders.length > 0 ? existingFolders.join(', ') : 'Aucun'}
 
     MISSION : Analyser cet email. 
-    CONSIGNE CRITIQUE : Tu DOIS réutiliser un dossier de la liste ci-dessus si l'email correspond à une thématique déjà existante. Ne crée un nouveau dossier que si c'est strictement nécessaire.
+    CONSIGNE : Réutilise impérativement un dossier de la liste ci-dessus s'il est pertinent. Ne crée un nouveau dossier que si aucune catégorie existante ne convient.
     
     EMAIL :
     De : ${email.from}
     Objet : ${email.subject}
-    Contenu : ${email.snippet}
+    Snippet : ${email.snippet}
 
-    RÉPONDS UNIQUEMENT PAR UN OBJET JSON VALIDE :
+    RÉPONDS UNIQUEMENT EN JSON :
     {
       "category": "Travail|Personnel|Finance|Social|Urgent|Autre",
-      "tags": ["TagExistantOuNouveau"],
-      "suggestedFolder": "NOM_DU_DOSSIER_EXISTANT_OU_NOUVEAU",
+      "tags": ["Tag1", "Tag2"],
+      "suggestedFolder": "NOM_DU_DOSSIER",
       "summary": "Résumé de 5 mots",
       "sentiment": "Positif|Neutre|Négatif"
     }
@@ -55,7 +55,7 @@ export const analyzeSingleEmail = async (
     } else {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const response = await ai.models.generateContent({
-        model: model,
+        model: 'gemini-3-pro-preview',
         contents: prompt,
         config: { responseMimeType: "application/json", temperature: 0.1 }
       });
@@ -66,7 +66,7 @@ export const analyzeSingleEmail = async (
     const parsed = JSON.parse(cleanedJson);
     return parsed;
   } catch (err) {
-    logger.error(`Erreur IA pour : ${email.subject}`, err);
+    logger.error(`Erreur IA : ${email.subject}`, err);
     throw err;
   }
 };
@@ -81,8 +81,8 @@ export const testAIConnection = async (provider: string, model: string): Promise
       return text.toUpperCase().includes('OK');
     } else {
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const resp = await ai.models.generateContent({ model, contents: testPrompt });
+      const resp = await ai.models.generateContent({ model: 'gemini-3-flash-preview', contents: testPrompt });
       return resp.text?.toUpperCase().includes('OK') || false;
     }
-  } catch (err) { return false; }
+  } catch { return false; }
 };
